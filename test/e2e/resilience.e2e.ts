@@ -143,7 +143,8 @@ suite.test("a token refused inside a 200 stops a range at the first refusal and 
   const { fake } = scope;
   fake.setFlights("both", { origin: "LIM", destination: "SCL" }, SANTIAGO);
   fake.fail("cbplus.search", REFUSED_TOKEN);
-  const days = [day(40), day(41), day(42), day(43)];
+  /* More days than Click and Book Plus asks for at once. */
+  const days = Array.from({ length: 6 }, (_, index) => day(40 + index));
   const { page } = await scope.signedInPage(searchLink({ mode: "flexible", trip: "one-way", origin: "LIM", destination: "SCL", departureStart: days[0], departureEnd: days.at(-1) }));
   await searchForm.submit(page).waitFor();
   const started = await runSearch<SearchJob>(page);

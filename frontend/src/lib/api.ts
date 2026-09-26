@@ -208,11 +208,7 @@ const EXACT_TRANSLATIONS: Record<string, string> = {
   "Selecting a cell runs a full Click and Book Plus exact search for offers.": "Selecciona una fecha para ver las ofertas disponibles.",
   "Search cancelled by user.": "Búsqueda detenida por el usuario.",
   "Search stopped because Fly Desk was restarted.": "Búsqueda detenida por reinicio de Fly Desk.",
-  /* The runner's admission refusals are written for the desk already, and are
-     the whole reason a search that never started failed. */
-  "La cola de búsquedas está llena. Intenta nuevamente en unos minutos.": "La cola de búsquedas está llena. Intenta nuevamente en unos minutos.",
-  "La búsqueda esperó demasiado por capacidad disponible.": "La búsqueda esperó demasiado por capacidad disponible.",
-  "La búsqueda fue cancelada antes de iniciar.": "La búsqueda fue cancelada antes de iniciar.",
+  "Search failed unexpectedly.": "La búsqueda se detuvo por un error inesperado. Intenta nuevamente.",
 }
 
 /* `validateSearchDateInPolicy` labels every date field of the request. */
@@ -1448,6 +1444,11 @@ export async function startMigrationSearch(
 
   emitProgress()
 
+  /* The runner starts one month-long range at a time, in the order it is asked
+     for them: each month is asked for once the one before it has its job, so
+     the sweep runs in calendar order while the next month already waits. */
+  let previousStart: Promise<unknown> = Promise.resolve()
+
   await runWithConcurrency(
     ranges,
     MIGRATION_CONCURRENT_MONTHS,
@@ -1473,12 +1474,17 @@ export async function startMigrationSearch(
         emitProgress()
       }
 
-      try {
+      const started = previousStart.then(() => {
         throwIfAborted(options.signal)
-        const first = await startSearch(migrationRequestForMonth(request, range), "cheapest", {
+        return startSearch(migrationRequestForMonth(request, range), "cheapest", {
           onJobStart: options.onJobStart,
           recordLocationUsage: index === 0,
         })
+      })
+      previousStart = started.catch(() => undefined)
+
+      try {
+        const first = await started
         throwIfAborted(options.signal)
         record(first)
         await followJob(first, (since, signal) => pollSearch(first.searchJobId, since, signal), {

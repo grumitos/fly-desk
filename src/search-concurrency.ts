@@ -40,8 +40,12 @@ export const SHARED_SEARCH_CONCURRENCY = Object.freeze({
     return atLeast(readIntegerEnv("SEARCH_MATRIX_CELL_CONCURRENCY"), 6);
   },
   rangeMinimum: 2,
+  /* Four days of a range at a time. Search admission runs one month-long
+     range at a time (`src/search-admission.ts`), so a migratory sweep gets its
+     speed from the days inside a month: four of them put 28 Agil requests in
+     flight, what two months of two days each used to. */
   get rangeSearchDefault() {
-    return atLeast(readIntegerEnv("SEARCH_RANGE_SEARCH_CONCURRENCY"), 2);
+    return atLeast(readIntegerEnv("SEARCH_RANGE_SEARCH_CONCURRENCY") ?? 4, 2);
   },
 });
 

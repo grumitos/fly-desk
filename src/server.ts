@@ -354,6 +354,8 @@ async function proxyToRouter(request: Request, server: BunServer<undefined>, url
     headers,
     body,
     duplex: body ? "half" : undefined,
+    /* Aborts when the client goes away, so a long poll it abandoned ends. */
+    signal: request.signal,
   };
 
   let webResponse: Response;

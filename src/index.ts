@@ -17,7 +17,7 @@ import {
 import { startProviderPrewarmLoop } from "./provider-prewarm";
 import { isSearchServiceDelegationConfigured } from "./search-service-client";
 import { startSearchWorkerPool, stopSearchWorkerPool } from "./search-worker-client";
-import { flushPendingProgressForShutdown } from "./http-router";
+import { abortLiveJobs, flushPendingProgressForShutdown } from "./http-router";
 
 const STARTUP_BACKGROUND_TASK_DELAY_MS = 10_000;
 const SESSION_MAINTENANCE_INTERVAL_MS = 60_000;
@@ -155,12 +155,14 @@ async function main() {
     await phase("cancel", async () => {
       const cancelled = activeSessions?.cancelRunningJobs(SHUTDOWN_CANCELLED_WARNING, { cachePartial: true })
         ?? { searchJobs: 0, matrixJobs: 0 };
-      activeRuntime?.searchAdmission.dispose(SHUTDOWN_CANCELLED_WARNING);
+      /* What the cancelled jobs still had at their providers is hung up on,
+         and their units come back as that settles. */
+      abortLiveJobs();
       if (cancelled.searchJobs > 0 || cancelled.matrixJobs > 0) {
         console.warn(
           `Fly Desk shutdown cancelled active jobs: search=${cancelled.searchJobs} matrix=${cancelled.matrixJobs}`,
         );
-        await delay(SHUTDOWN_CANCEL_GRACE_MS);
+        await activeRuntime?.searchAdmission.drain(SHUTDOWN_CANCEL_GRACE_MS);
       }
     });
     clearInterval(maintenanceHandle);

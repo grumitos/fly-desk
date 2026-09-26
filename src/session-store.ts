@@ -248,6 +248,8 @@ export interface MatrixJobRecord {
   warnings: string[];
   providerDiagnostics?: ProviderDiagnostics[];
   status: SearchJobStatus;
+  /** Running, and still waiting for search capacity. */
+  queued?: boolean;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -266,6 +268,8 @@ export interface SearchJobRecord {
   providerDiagnostics?: ProviderDiagnostics[];
   sortMode: SortMode;
   status: SearchJobStatus;
+  /** Running, and still waiting for search capacity. */
+  queued?: boolean;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -1239,8 +1243,10 @@ export class SearchSessionStore {
       const metaWarnings = uniqueStrings([...(current.searchMeta.warnings ?? []), message]);
       const hasPartialResults = current.allOffers.length > 0;
       const cachePartial = Boolean(options.cachePartial && hasPartialResults);
+      /* A stopped job no longer waits for anything. */
+      const { queued: _queued, ...stopped } = current;
       return {
-        ...current,
+        ...stopped,
         status: cachePartial ? "completed" : "cancelled",
         error: cachePartial ? undefined : message,
         warnings,
@@ -1470,8 +1476,9 @@ export class SearchSessionStore {
       const metaWarnings = uniqueStrings([...(current.searchMeta.warnings ?? []), message]);
       const hasPartialResults = current.cells.some((cell) => cell.confidence !== "loading");
       const cachePartial = Boolean(options.cachePartial && hasPartialResults);
+      const { queued: _queued, ...stopped } = current;
       return {
-        ...current,
+        ...stopped,
         status: cachePartial ? "completed" : "cancelled",
         error: cachePartial ? undefined : message,
         warnings,

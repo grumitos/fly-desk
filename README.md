@@ -24,7 +24,7 @@ Fly Desk is a Bun-only application prepared for VPS deployment:
 - exact search
 - flexible one-way range search
 - flexible round-trip search through `/api/matrix`, normalized into a results list
-- exhaustive monthly migratory search: queries every day of up to twelve selected months against Agil and Click and Book Plus without fare filters and processes months in batches
+- exhaustive monthly migratory search: queries every day of up to twelve selected months against Agil and Click and Book Plus without fare filters, one month at a time in calendar order
 - all searches wait for Agil and Click and Book Plus and retain their complete results; concurrency regulates batch requests rather than trimming available offers
 - every search mode publishes its partial results as they resolve: deltas, published at most once per 900 ms and only on geometric milestones (1, 2, 4, 8…), plus the final state, without remounting visible cards
 - a provider that answered part of a search is named in one line above the results, «Resultados incompletos · Agilsmart respondió en parte», with the rest of the list kept; one that answered no part of it is named as a provider that is down, for example «Resultados incompletos · Agilsmart no respondió». A migratory sweep's line reads its months the same way
@@ -78,7 +78,7 @@ The current React UI does not expose:
 - In production, `fly-desk.service` can delegate `/api/search`, `/api/matrix`, polling, cancellation, quotation, and `/api/provider-status` to `fly-desk-search.service` through `FLY_DESK_SEARCH_SERVICE_URL`; that runner stays on loopback and runs providers/workers.
 - Every request the web unit hands to the runner goes out on a connection of its own. A read the runner refuses while it restarts is asked once more 500 ms later; a write is never sent twice.
 - With delegation enabled, the web runtime initializes the session cache lazily: autocomplete and preferences do not restore the runner's heavy state.
-- Search admission uses capacity units in the runner: default budget `4`, exact searches cost `1`, and range and matrix searches cost `2`. This permits two simultaneous heavy searches; excess work queues with a timeout.
+- Search admission shares capacity in the runner: an exact search always starts at once, heavy searches take turns fairly between the two agents' browsers, and two month-long ranges never run together. A search that does not fit waits for capacity; none is refused for it.
 - Price reuse expires from `searchMeta.completedAt`; reads and polling do not renew a fare. A separate idle TTL preserves operational sessions and redirects.
 - Completed resident jobs share a default 128 MiB budget. LRU excess leaves RAM after a short grace period but remains in SQLite with its `/r/<id>` paths until TTL expiry; active searches are never evicted.
 - Active progress uses the same geometric milestones to bound RAM/HTTP/SQLite snapshots. New purchase paths persist separately so `/r/<id>` works between checkpoints, and every terminal state is durable.
@@ -142,7 +142,7 @@ Bun is the supported package manager. Do not add `package-lock.json`, `pnpm-lock
 
 - Runtime/API: `HOST`, `PORT`, `FLY_DESK_API_TOKEN`, `FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS`, `FLY_DESK_SEARCH_SERVICE_URL`, `FLY_DESK_SEARCH_SERVICE_API_TOKEN`, `FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS`, `FLY_DESK_REDIRECT_HOST`, `FLY_DESK_REDIRECT_PORT`, `FLY_DESK_REDIRECT_CACHE_LOOKUP_TIMEOUT_MS`
 - Web auth: `FLY_DESK_WEB_AUTH`, `FLY_DESK_WEB_PASSWORD_HASH`, `FLY_DESK_WEB_SESSION_SECRET`, `FLY_DESK_WEB_SESSION_TTL_SECONDS`, `FLY_DESK_WEB_SESSION_MAX_LIFETIME_SECONDS`, `FLY_DESK_COOKIE_SECURE`, `FLY_DESK_TRUST_LOOPBACK_CLIENT`, `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK`
-- Search/persistence: `SEARCH_MAX_FUTURE_DAYS`, `SEARCH_REVALIDATION_CACHE_TTL_MS`, `SEARCH_COMPLETED_SESSION_TTL_MS`, `SEARCH_COMPLETED_SESSION_RESIDENT_BUDGET_BYTES`, `FLY_DESK_QUOTATION_RATE_TIMEOUT_MS`, `FLY_DESK_SESSION_DB_PATH`, `FLY_DESK_LOCATION_SUGGESTION_DB_PATH`, `FLY_DESK_LOCATION_USAGE_DB_PATH`, `FLY_DESK_MIGRATION_CONCURRENT_MONTHS`, `FLY_DESK_SEARCH_CAPACITY_UNITS`, `FLY_DESK_SEARCH_EXACT_COST_UNITS`, `FLY_DESK_SEARCH_RANGE_COST_UNITS`, `FLY_DESK_SEARCH_MATRIX_COST_UNITS`, `FLY_DESK_SEARCH_MAX_QUEUED`, `FLY_DESK_SEARCH_QUEUE_TIMEOUT_MS`
+- Search/persistence: `SEARCH_MAX_FUTURE_DAYS`, `SEARCH_REVALIDATION_CACHE_TTL_MS`, `SEARCH_COMPLETED_SESSION_TTL_MS`, `SEARCH_COMPLETED_SESSION_RESIDENT_BUDGET_BYTES`, `FLY_DESK_QUOTATION_RATE_TIMEOUT_MS`, `FLY_DESK_SESSION_DB_PATH`, `FLY_DESK_LOCATION_SUGGESTION_DB_PATH`, `FLY_DESK_LOCATION_USAGE_DB_PATH`, `FLY_DESK_MIGRATION_CONCURRENT_MONTHS`
 - Application data: `FLY_DESK_APP_DATA_DIR`, `FLY_DESK_QUOTATION_RATE_CACHE_PATH`
 - Workers/prewarm: `FLY_DESK_SEARCH_WORKER_PROCESSES`, `FLY_DESK_SEARCH_WORKER_POOL`, `FLY_DESK_SEARCH_WORKER_MAX_JOBS`, `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS`, `FLY_DESK_PROVIDER_PREWARM`
 - Agil: `AGIL_APIM_SUBSCRIPTION_KEY`, `AGIL_IDENTITY_PATH`, `AGIL_CHROME_USER_DATA_DIR`, `AGIL_CHROME_PROFILE`, `AGIL_BROWSER_URL`, `AGIL_RAW_CHROME_STORAGE_FILE_SCAN`, `AGIL_TEMP_CHROME_STORAGE_FALLBACK`, `AGIL_HTTP_TIMEOUT_MS`

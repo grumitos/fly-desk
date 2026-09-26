@@ -201,6 +201,8 @@ export interface SearchJob {
   allOffers?: CanonicalOffer[];
   warnings?: string[];
   error?: string;
+  /** Running, and still waiting for capacity. */
+  queued?: boolean;
   searchMeta?: JobMeta;
   providerDiagnostics?: JobProviderDiagnostics[];
 }
@@ -214,6 +216,8 @@ export interface MatrixJob {
   cells?: MatrixCell[];
   warnings?: string[];
   error?: string;
+  /** Running, and still waiting for capacity. */
+  queued?: boolean;
   searchMeta?: JobMeta;
   providerDiagnostics?: JobProviderDiagnostics[];
 }
@@ -238,6 +242,25 @@ export function readSearchJob(session: ApiSession, jobId: string): Promise<Searc
 
 export function readMatrixJob(session: ApiSession, jobId: string): Promise<MatrixJob> {
   return session.json<MatrixJob>("GET", `/api/matrix/${encodeURIComponent(jobId)}`);
+}
+
+/** The runner's shared search capacity, as the desk's indicator reads it. */
+export interface SearchCapacity {
+  version: string;
+  capacityUnits: number;
+  activeUnits: number;
+  queuedUnits: number;
+  activeSearches: number;
+  queuedSearches: number;
+}
+
+/** `GET /api/search-capacity`: at once without `version`, else held until it changes or `waitMs` runs out. */
+export function readCapacity(session: ApiSession, version?: string, waitMs?: number): Promise<SearchCapacity> {
+  const query = new URLSearchParams();
+  if (version) query.set("version", version);
+  if (waitMs) query.set("wait", String(waitMs));
+  const suffix = query.size > 0 ? `?${query}` : "";
+  return session.json<SearchCapacity>("GET", `/api/search-capacity${suffix}`);
 }
 
 /** The `/r/<id>` handle of an offer's provider search page. */

@@ -135,7 +135,7 @@ because the build cannot keep a derived colour theme-aware.
 - The notice line: one line, dismissible, above the results (see Copy).
 - Primitives: `.fd-btn` (primary, secondary and ghost; chip, small, medium, extra-large and icon sizes), `.fd-segmented`, `.fd-popover`, `.fd-checkbox`, `.fd-switch`, `.fd-tooltip`, `.fd-key`, and the `Sheet` component in bottom, side and modal placements.
 
-Do not render placeholder sections for workflows that are not connected in the React app. Flexible search is connected through `stay-range` and `/api/matrix`; monthly migratory search is connected through client-side monthly `stay-range` fan-out for selected months. Each migratory month scans every day against Agil and Click and Book Plus without fare filters, while the client limits concurrent months to batches. Multi-city search, the dedicated calendar/matrix view, and visible `reprice` stay hidden.
+Do not render placeholder sections for workflows that are not connected in the React app. Flexible search is connected through `stay-range` and `/api/matrix`; monthly migratory search is connected through client-side monthly `stay-range` fan-out for selected months. Each migratory month scans every day against Agil and Click and Book Plus without fare filters; the client asks for the months in calendar order and the runner searches one at a time. Multi-city search, the dedicated calendar/matrix view, and visible `reprice` stay hidden.
 
 The results grid is fixed; there is no layout editor, and adding one needs a product decision and a real consumer.
 

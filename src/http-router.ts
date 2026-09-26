@@ -58,6 +58,8 @@ import {
   resolveStandaloneUsdToPenRateInfo,
 } from "./quotation-exchange-rate";
 import { SearchAdmissionError, type SearchAdmissionKind } from "./search-admission";
+import { withProviderJobSignal } from "./provider-fetch";
+import { enumerateUsefulFlexibleRequests } from "./core/flexible-search";
 import { hasAcceptedApiAccessToken } from "./service-auth";
 import {
   isSearchServiceDelegationConfigured,
@@ -91,6 +93,7 @@ import {
   shouldTrustLoopbackClient,
   verifyWebPassword,
   WEB_SESSION_COOKIE_NAME,
+  webSessionHolder,
 } from "./web-auth";
 import {
   checkWebLoginAdmission,
@@ -214,6 +217,7 @@ const SEARCH_REVALIDATION_CACHE_WARNING = "Mostrando resultados cacheados mientr
 const SEARCH_PROGRESS_SYNC_INTERVAL_MS = 900;
 const SEARCH_CANCELLED_WARNING = "Search cancelled by user.";
 const SEARCH_REFRESH_CANCELLED_WARNING = "Search stopped because the page was refreshed.";
+const SEARCH_FAILED_UNEXPECTEDLY = "Search failed unexpectedly.";
 function readNonNegativeEnvMs(name: string, fallbackMs: number): number {
   const configured = envNumber(name, fallbackMs);
   return configured >= 0 ? Math.trunc(configured) : fallbackMs;
@@ -348,6 +352,134 @@ export function flushPendingProgressForShutdown(): void {
     controller.dispose();
     pendingProgressSyncs.delete(key);
   }
+}
+
+/* The jobs this process runs, each with the signal that stops its provider
+   work or takes it out of the admission queue. */
+type JobKind = "search" | "matrix";
+
+const liveJobs = new Map<string, AbortController>();
+
+function liveJobKey(kind: JobKind, jobId: string): string {
+  return `${kind}:${jobId}`;
+}
+
+function startLiveJob(kind: JobKind, jobId: string): AbortSignal {
+  const controller = new AbortController();
+  liveJobs.set(liveJobKey(kind, jobId), controller);
+  return controller.signal;
+}
+
+function endLiveJob(kind: JobKind, jobId: string): void {
+  liveJobs.delete(liveJobKey(kind, jobId));
+}
+
+/** Stops a job's provider work, or takes it out of the admission queue. */
+function abortLiveJob(kind: JobKind, jobId: string): void {
+  liveJobs.get(liveJobKey(kind, jobId))?.abort();
+}
+
+/** Every job this process runs, stopped: its provider work, or its wait. */
+export function abortLiveJobs(): void {
+  for (const controller of liveJobs.values()) {
+    controller.abort();
+  }
+}
+
+/*
+ * Ends a running job the way the desk's stop does: what it found is kept when
+ * `cachePartial` asks for it, the job leaves the queue or its provider work is
+ * hung up on, and its capacity is released as that work settles.
+ */
+function stopJob(runtime: ReturnType<typeof getRuntime>, kind: "search", jobId: string, message: string, cachePartial: boolean): SearchJobRecord | undefined;
+function stopJob(runtime: ReturnType<typeof getRuntime>, kind: "matrix", jobId: string, message: string, cachePartial: boolean): MatrixJobRecord | undefined;
+function stopJob(runtime: ReturnType<typeof getRuntime>, kind: JobKind, jobId: string, message: string, cachePartial: boolean): SearchJobRecord | MatrixJobRecord | undefined;
+function stopJob(
+  runtime: ReturnType<typeof getRuntime>,
+  kind: JobKind,
+  jobId: string,
+  message: string,
+  cachePartial: boolean,
+): SearchJobRecord | MatrixJobRecord | undefined {
+  disposePendingProgressSync(kind, jobId, cachePartial);
+  const job = kind === "search"
+    ? runtime.sessions.cancelSearchJob(jobId, message, { cachePartial })
+    : runtime.sessions.cancelMatrixJob(jobId, message, { cachePartial });
+  abortLiveJob(kind, jobId);
+  return job;
+}
+
+/* Which signed-in browser asked; capacity is shared out between these. */
+function searchSessionKey(request: Request): string | undefined {
+  return webSessionHolder(request);
+}
+
+/*
+ * Asks admission for a job's capacity, then runs it. While the job waits it is
+ * marked `queued`, which the desk reads to say so; the mark goes the moment it
+ * starts. Its units are released exactly once, when `run` settles, however it
+ * ends. A job stopped while it waits never starts, and one the runner turns
+ * away as it shuts down is stopped with the runner's reason.
+ */
+function admitAndRunJob(
+  runtime: ReturnType<typeof getRuntime>,
+  job: { kind: JobKind; id: string },
+  admission: { kind: SearchAdmissionKind; daySearches?: number; sessionKey?: string },
+  startDelayMs: number,
+  run: (signal: AbortSignal) => Promise<void>,
+): void {
+  const signal = startLiveJob(job.kind, job.id);
+  const markQueued = (queued: boolean) => {
+    const update = <T extends SearchJobRecord | MatrixJobRecord>(current: T): T => {
+      if (Boolean(current.queued) === queued || current.status !== "running") {
+        return current;
+      }
+      const { queued: _queued, ...rest } = current;
+      return (queued ? { ...rest, queued: true } : rest) as T;
+    };
+    if (job.kind === "search") {
+      runtime.sessions.updateSearchJob(job.id, update, { persist: false });
+    } else {
+      runtime.sessions.updateMatrixJob(job.id, update, { persist: false });
+    }
+  };
+
+  runtime.searchAdmission.acquire({
+    ...admission,
+    jobId: job.id,
+    signal,
+    onQueued: () => markQueued(true),
+  }).then(
+    (lease) => {
+      markQueued(false);
+      scheduleBackgroundSearchJob(() => {
+        void (signal.aborted ? Promise.resolve() : run(signal))
+          .catch((error: unknown) => {
+            console.error(`Fly Desk ${job.kind} job ${job.id} failed: ${error instanceof Error ? error.name : "Error"}`);
+            failJob(runtime, job.kind, job.id, SEARCH_FAILED_UNEXPECTEDLY);
+          })
+          .finally(() => {
+            lease.release();
+            endLiveJob(job.kind, job.id);
+          });
+      }, startDelayMs);
+    },
+    (error: unknown) => {
+      endLiveJob(job.kind, job.id);
+      if (!signal.aborted) {
+        stopJob(runtime, job.kind, job.id, error instanceof SearchAdmissionError ? error.message : SEARCH_FAILED_UNEXPECTEDLY, true);
+      }
+    },
+  );
+}
+
+/* A range asks one exact search per day (or day pair): what its cost grows with. */
+function searchAdmissionFor(request: SearchRequest): { kind: SearchAdmissionKind; daySearches?: number } {
+  if (request.searchMode !== "stay-range") {
+    return { kind: "exact" };
+  }
+
+  return { kind: "range", daySearches: enumerateUsefulFlexibleRequests(request).length };
 }
 
 function providerDiagnosticKindForRequest(request: SearchRequest): ProviderDiagnosticKind {
@@ -824,6 +956,7 @@ async function resolveProviderSearchProgressive(
   diagnostics: ProviderDiagnostics | undefined,
   onProviderEvent: ((event: ProviderDiagnosticEvent) => void) | undefined,
   shouldContinue: (() => boolean) | undefined,
+  signal?: AbortSignal,
 ): Promise<ProviderSearchResult> {
   const kind = request.searchMode === "stay-range" ? "range" : "exact";
   if (shouldUseSearchWorkerProcesses()) {
@@ -835,6 +968,7 @@ async function resolveProviderSearchProgressive(
       onProgress,
       onProviderEvent,
       shouldContinue,
+      signal,
     });
   }
 
@@ -856,10 +990,11 @@ async function resolveProviderSearchProgressive(
     assertProviderWorkStillRunning(shouldContinue);
     return result;
   };
+  const runUnderSignal = signal ? () => withProviderJobSignal(signal, run) : run;
 
   return diagnostics
-    ? withProviderDiagnostics(diagnostics, onProviderEvent, run)
-    : run();
+    ? withProviderDiagnostics(diagnostics, onProviderEvent, runUnderSignal)
+    : runUnderSignal();
 }
 
 async function resolveProviderMatrixProgressive(
@@ -871,6 +1006,7 @@ async function resolveProviderMatrixProgressive(
   diagnostics: ProviderDiagnostics | undefined,
   onProviderEvent: ((event: ProviderDiagnosticEvent) => void) | undefined,
   shouldContinue: (() => boolean) | undefined,
+  signal?: AbortSignal,
 ): Promise<MatrixResponse> {
   if (shouldUseSearchWorkerProcesses()) {
     return runProviderMatrixInWorker({
@@ -881,6 +1017,7 @@ async function resolveProviderMatrixProgressive(
       onCellResolved,
       onProviderEvent,
       shouldContinue,
+      signal,
     });
   }
 
@@ -903,10 +1040,11 @@ async function resolveProviderMatrixProgressive(
     assertProviderWorkStillRunning(shouldContinue);
     return result;
   };
+  const runUnderSignal = signal ? () => withProviderJobSignal(signal, run) : run;
 
   return diagnostics
-    ? withProviderDiagnostics(diagnostics, onProviderEvent, run)
-    : run();
+    ? withProviderDiagnostics(diagnostics, onProviderEvent, runUnderSignal)
+    : runUnderSignal();
 }
 
 async function suggestLocationsForProvider(
@@ -1584,8 +1722,12 @@ function parseSinceRevision(value: string | null): number | undefined {
  * same `wait` to its own timeout (`resolveProxyTimeoutMsForRequest`).
  */
 const JOB_POLL_MAX_WAIT_MS = 20_000;
+/* A capacity poll holds for up to this long when nothing changes: well inside
+   every hop's budget (the web unit's own proxy timeout adds the wait to its
+   15 s), and still a single request every 25 s for an idle desk. */
+const CAPACITY_POLL_MAX_WAIT_MS = 25_000;
 
-function parseJobPollWaitMs(value: string | null): number {
+function parseJobPollWaitMs(value: string | null, maxWaitMs = JOB_POLL_MAX_WAIT_MS): number {
   if (!value) {
     return 0;
   }
@@ -1595,7 +1737,7 @@ function parseJobPollWaitMs(value: string | null): number {
     return 0;
   }
 
-  return Math.min(parsed, JOB_POLL_MAX_WAIT_MS);
+  return Math.min(parsed, maxWaitMs);
 }
 
 function resolveLocationSuggestionSessionId(value: string | null): string | undefined {
@@ -1677,6 +1819,7 @@ function matrixJobResponse(
     warnings: job.warnings,
     providerDiagnostics: job.providerDiagnostics,
     error: job.error,
+    queued: job.queued === true,
     unchanged,
   };
 
@@ -1932,6 +2075,7 @@ function searchJobResponse(job: SearchJobRecord, sinceRevision?: number): Respon
     warnings: job.warnings,
     providerDiagnostics: job.providerDiagnostics,
     error: job.error,
+    queued: job.queued === true,
     unchanged,
   });
   const body = unchanged
@@ -1951,38 +2095,18 @@ function isMatrixJobRunning(runtime: ReturnType<typeof getRuntime>, jobId: strin
   return runtime.sessions.getMatrixJob(jobId)?.status === "running";
 }
 
-function searchAdmissionKindForRequest(request: SearchRequest): SearchAdmissionKind {
-  return request.searchMode === "exact" ? "exact" : "range";
-}
-
-function searchAdmissionErrorMessage(error: unknown): string {
-  if (error instanceof SearchAdmissionError) {
-    switch (error.code) {
-      case "queue-full":
-        return "La cola de búsquedas está llena. Intenta nuevamente en unos minutos.";
-      case "queue-timeout":
-        return "La búsqueda esperó demasiado por capacidad disponible.";
-      case "cancelled":
-        return "La búsqueda fue cancelada antes de iniciar.";
+function failedProviderDiagnostics(entries: ProviderDiagnostics[] | undefined, message: string): ProviderDiagnostics[] {
+  return (entries ?? []).reduce((current, entry) => {
+    if (entry.status === "completed" || entry.status === "failed") {
+      return current;
     }
-  }
-
-  return "No se pudo iniciar la búsqueda.";
-}
-
-function admissionFailedProviderDiagnostics(
-  entries: ProviderDiagnostics[] | undefined,
-  providerIds: ProviderId[],
-  message: string,
-): ProviderDiagnostics[] {
-  return providerIds.reduce((current, providerId) => {
     const withEvent = applyProviderDiagnosticEvent(
       current,
-      providerId,
-      { name: "admission_failed", detail: message, at: new Date().toISOString() },
+      entry.providerId,
+      { name: "failed", detail: message, at: new Date().toISOString() },
       "failed",
     );
-    return applyProviderDiagnosticSummary(withEvent, providerId, "failed", {
+    return applyProviderDiagnosticSummary(withEvent, entry.providerId, "failed", {
       offers: 0,
       warningCount: 1,
       error: message,
@@ -1990,49 +2114,40 @@ function admissionFailedProviderDiagnostics(
   }, cloneProviderDiagnosticsList(entries));
 }
 
-function failSearchJobForAdmission(
-  runtime: ReturnType<typeof getRuntime>,
-  jobId: string,
-  providerIds: ProviderId[],
-  error: unknown,
-): void {
-  const message = searchAdmissionErrorMessage(error);
-  runtime.sessions.updateSearchJob(jobId, (current) => {
-    if (current.status !== "running") {
-      return current;
-    }
+/* A job whose own code threw: it ends `failed`, with its providers still out
+   marked so, and keeps what it had found. */
+function failJob(runtime: ReturnType<typeof getRuntime>, kind: JobKind, jobId: string, message: string): void {
+  disposePendingProgressSync(kind, jobId, true);
+  if (kind === "search") {
+    runtime.sessions.updateSearchJob(jobId, (current) => {
+      if (current.status !== "running") {
+        return current;
+      }
 
-    const warnings = uniqueStrings([...current.warnings, message]);
-    return {
-      ...current,
-      status: "failed",
-      error: message,
-      warnings,
-      providerDiagnostics: admissionFailedProviderDiagnostics(current.providerDiagnostics, providerIds, message),
-      searchMeta: currentSearchMeta({
-        ...current.searchMeta,
-        completedAt: new Date().toISOString(),
-        warnings: uniqueStrings([...(current.searchMeta.warnings ?? []), message]),
-        partial: current.allOffers.length > 0 || current.searchMeta.partial,
-        searchState: "search_failed",
-      }),
-    };
-  });
-}
+      const { queued: _queued, ...running } = current;
+      return {
+        ...running,
+        status: "failed",
+        error: message,
+        warnings: uniqueStrings([...current.warnings, message]),
+        providerDiagnostics: failedProviderDiagnostics(current.providerDiagnostics, message),
+        searchMeta: currentSearchMeta({
+          ...current.searchMeta,
+          completedAt: new Date().toISOString(),
+          warnings: uniqueStrings([...(current.searchMeta.warnings ?? []), message]),
+          partial: current.allOffers.length > 0 || current.searchMeta.partial,
+          searchState: "search_failed",
+        }),
+      };
+    });
+    return;
+  }
 
-function failMatrixJobForAdmission(
-  runtime: ReturnType<typeof getRuntime>,
-  jobId: string,
-  providerIds: ProviderId[],
-  error: unknown,
-): void {
-  const message = searchAdmissionErrorMessage(error);
   runtime.sessions.updateMatrixJob(jobId, (current) => {
     if (current.status !== "running") {
       return current;
     }
 
-    const warnings = uniqueStrings([...current.warnings, message]);
     const cells = current.cells.map((cell) => cell.confidence === "loading"
       ? {
           ...cell,
@@ -2042,14 +2157,15 @@ function failMatrixJobForAdmission(
           tooltip: message,
         }
       : cell);
+    const { queued: _queued, ...running } = current;
     return {
-      ...current,
+      ...running,
       status: "failed",
       error: message,
-      warnings,
+      warnings: uniqueStrings([...current.warnings, message]),
       cells,
       confidenceSummary: buildMatrixConfidenceSummary(cells),
-      providerDiagnostics: admissionFailedProviderDiagnostics(current.providerDiagnostics, providerIds, message),
+      providerDiagnostics: failedProviderDiagnostics(current.providerDiagnostics, message),
       searchMeta: currentSearchMeta({
         ...current.searchMeta,
         completedAt: new Date().toISOString(),
@@ -2067,12 +2183,7 @@ function shouldCachePartialCancellation(url: URL): boolean {
 
 function cancelSearchJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: string, url: URL): Response {
   const cachePartial = shouldCachePartialCancellation(url);
-  disposePendingProgressSync("search", jobId, cachePartial);
-  const job = runtime.sessions.cancelSearchJob(
-    jobId,
-    cachePartial ? SEARCH_REFRESH_CANCELLED_WARNING : SEARCH_CANCELLED_WARNING,
-    { cachePartial },
-  );
+  const job = stopJob(runtime, "search", jobId, cachePartial ? SEARCH_REFRESH_CANCELLED_WARNING : SEARCH_CANCELLED_WARNING, cachePartial);
   if (!job) {
     return json({ error: "Search job not found." }, { status: 404 });
   }
@@ -2082,12 +2193,7 @@ function cancelSearchJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: 
 
 function cancelMatrixJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: string, url: URL): Response {
   const cachePartial = shouldCachePartialCancellation(url);
-  disposePendingProgressSync("matrix", jobId, cachePartial);
-  const job = runtime.sessions.cancelMatrixJob(
-    jobId,
-    cachePartial ? SEARCH_REFRESH_CANCELLED_WARNING : SEARCH_CANCELLED_WARNING,
-    { cachePartial },
-  );
+  const job = stopJob(runtime, "matrix", jobId, cachePartial ? SEARCH_REFRESH_CANCELLED_WARNING : SEARCH_CANCELLED_WARNING, cachePartial);
   if (!job) {
     return json({ error: "Matrix job not found." }, { status: 404 });
   }
@@ -2298,212 +2404,202 @@ async function handleSearchRequest(
     });
     registerPendingProgressSync("search", job.id, searchProgressSync);
     const syncSearchProgress = searchProgressSync.mark;
-    scheduleBackgroundSearchJob(() => {
-      void runtime.searchAdmission.run(
-        {
-          kind: searchAdmissionKindForRequest(normalizedRequest),
-          jobId: job.id,
-          shouldContinue: () => isSearchJobRunning(runtime, job.id),
-        },
-        async () => {
-          if (!isSearchJobRunning(runtime, job.id)) {
-            disposePendingProgressSync("search", job.id);
-            return;
-          }
-
-          const failedProviderIds = new Set<ProviderId>();
-          const resolvers = providerIds.map(async (providerId) => {
-            const providerStart = startPerfTimer();
-            const providerDiagnosticSeed = providerDiagnostics.find((entry) => entry.providerId === providerId);
-            const recordProviderEvent = (
-              event: ProviderDiagnosticEvent | string,
-              status: ProviderDiagnostics["status"] = "running",
-            ) => {
-              runtime.sessions.updateSearchJob(job.id, (current) => ({
-                ...current,
-                providerDiagnostics: applyProviderDiagnosticEvent(
-                  current.providerDiagnostics,
-                  providerId,
-                  event,
-                  status,
-                ),
-              }));
-            };
-            const recordProviderSummary = (
-              status: ProviderDiagnostics["status"],
-              summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "partial" | "error">,
-            ) => {
-              runtime.sessions.updateSearchJob(job.id, (current) => ({
-                ...current,
-                providerDiagnostics: applyProviderDiagnosticSummary(
-                  current.providerDiagnostics,
-                  providerId,
-                  status,
-                  summary,
-                ),
-              }));
-            };
-            let firstProgressReported = false;
-            const onProgress = (partialResult: ProviderSearchResult) => {
-              if (!isSearchJobRunning(runtime, job.id)) {
-                return false;
-              }
-
-              if (!firstProgressReported) {
-                firstProgressReported = true;
-                recordProviderEvent("first_progress");
-              }
-
-              providerStates.set(
-                providerId,
-                mergeProviderSearchProgress(providerStates.get(providerId), partialResult),
-              );
-              startQuotationRateResolution(
-                normalizedRequest,
-                partialResult.offers,
-                quotationRateResolver,
-              );
-              syncSearchProgress();
-              return isSearchJobRunning(runtime, job.id);
-            };
-
-            try {
-              if (!isSearchJobRunning(runtime, job.id)) {
-                return;
-              }
-
-              runtime.providerStatus.markChecking(providerId, "search");
-              if (shouldUseSearchWorkerProcesses()) {
-                recordProviderEvent("worker_spawned");
-              }
-
-              const result = await resolveProviderSearchProgressive(
-                providerId,
-                normalizedRequest,
-                providerContext,
-                onProgress,
-                providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
-                (event) => recordProviderEvent(event),
-                () => isSearchJobRunning(runtime, job.id),
-              );
-              if (!isSearchJobRunning(runtime, job.id)) {
-                return;
-              }
-
-              providerStates.set(providerId, {
-                offers: result.offers,
-                warnings: result.warnings,
-                partial: result.partial,
-                completed: true,
-                fresh: true,
-              });
-              runtime.providerStatus.recordSearchResult(providerId, result.partial);
-              startQuotationRateResolution(
-                normalizedRequest,
-                providerIds.flatMap((id) => providerStates.get(id)?.offers ?? []),
-                quotationRateResolver,
-              );
-              logPerfSpan("search.provider", providerStart, {
-                jobId: job.id,
-                providerId,
-                status: "completed",
-                offers: result.offers.length,
-                partial: result.partial,
-              });
-              recordProviderEvent("completed", "completed");
-              /* A provider that completes partial left a day or a GDS out: its
-                 list is real but short, and the desk names it for that. */
-              recordProviderSummary("completed", {
-                offers: result.offers.length,
-                warningCount: result.warnings.length,
-                partial: result.partial,
-              });
-              syncSearchProgress();
-            } catch (error) {
-              if (!isSearchJobRunning(runtime, job.id)) {
-                return;
-              }
-
-              runtime.providerStatus.recordSearchFailure(providerId, error);
-              const partialState = providerStates.get(providerId);
-              const errorMessage = providerPublicFailureMessage(providerId, error);
-              providerStates.set(providerId, {
-                offers: partialState?.fresh ? partialState.offers : [],
-                warnings: uniqueStrings([
-                  ...(partialState?.fresh ? partialState.warnings : []),
-                  errorMessage,
-                ]),
-                partial: true,
-                completed: true,
-                fresh: true,
-              });
-              failedProviderIds.add(providerId);
-              recordProviderEvent("failed", "failed");
-              recordProviderSummary("failed", {
-                offers: 0,
-                warningCount: 1,
-                error: errorMessage,
-              });
-              logPerfSpan("search.provider", providerStart, {
-                jobId: job.id,
-                providerId,
-                status: "failed",
-                error: error instanceof Error ? error.name : "Error",
-              });
-              syncSearchProgress();
-            }
-          });
-
-          const settled = await Promise.allSettled(resolvers);
-          if (!isSearchJobRunning(runtime, job.id)) {
-            disposePendingProgressSync("search", job.id);
-            logPerfSpan("search.job", requestStart, {
-              jobId: job.id,
-              status: runtime.sessions.getSearchJob(job.id)?.status ?? "missing",
-              providers: providerIds.join(","),
-            });
-            return;
-          }
-
-          const sourceOffers = providerIds.flatMap((providerId) => providerStates.get(providerId)?.offers ?? []);
-          const readyOffers = await resolveQuotationReadyOffers(normalizedRequest, sourceOffers, quotationRateResolver);
-          const readyBySource = new Map(sourceOffers.map((offer, index) => [offer, readyOffers[index]]));
-          providerIds.forEach((providerId) => {
-            const state = providerStates.get(providerId);
-            if (state) {
-              state.offers = state.offers.map((offer) => readyBySource.get(offer) ?? offer);
-            }
-          });
-          if (!isSearchJobRunning(runtime, job.id)) {
-            disposePendingProgressSync("search", job.id);
-            return;
-          }
-
+    admitAndRunJob(
+      runtime,
+      { kind: "search", id: job.id },
+      { ...searchAdmissionFor(normalizedRequest), sessionKey: searchSessionKey(request) },
+      cacheSeedJob ? cachedBackgroundSearchStartDelayMs() : backgroundSearchStartDelayMs(),
+      async (signal) => {
+        if (!isSearchJobRunning(runtime, job.id)) {
           disposePendingProgressSync("search", job.id);
-          const materialized = syncSearchJob("completed");
+          return;
+        }
+
+        const failedProviderIds = new Set<ProviderId>();
+        const resolvers = providerIds.map(async (providerId) => {
+          const providerStart = startPerfTimer();
+          const providerDiagnosticSeed = providerDiagnostics.find((entry) => entry.providerId === providerId);
+          const recordProviderEvent = (
+            event: ProviderDiagnosticEvent | string,
+            status: ProviderDiagnostics["status"] = "running",
+          ) => {
+            runtime.sessions.updateSearchJob(job.id, (current) => ({
+              ...current,
+              providerDiagnostics: applyProviderDiagnosticEvent(
+                current.providerDiagnostics,
+                providerId,
+                event,
+                status,
+              ),
+            }));
+          };
+          const recordProviderSummary = (
+            status: ProviderDiagnostics["status"],
+            summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "partial" | "error">,
+          ) => {
+            runtime.sessions.updateSearchJob(job.id, (current) => ({
+              ...current,
+              providerDiagnostics: applyProviderDiagnosticSummary(
+                current.providerDiagnostics,
+                providerId,
+                status,
+                summary,
+              ),
+            }));
+          };
+          let firstProgressReported = false;
+          const onProgress = (partialResult: ProviderSearchResult) => {
+            if (!isSearchJobRunning(runtime, job.id)) {
+              return false;
+            }
+
+            if (!firstProgressReported) {
+              firstProgressReported = true;
+              recordProviderEvent("first_progress");
+            }
+
+            providerStates.set(
+              providerId,
+              mergeProviderSearchProgress(providerStates.get(providerId), partialResult),
+            );
+            startQuotationRateResolution(
+              normalizedRequest,
+              partialResult.offers,
+              quotationRateResolver,
+            );
+            syncSearchProgress();
+            return isSearchJobRunning(runtime, job.id);
+          };
+
+          try {
+            if (!isSearchJobRunning(runtime, job.id)) {
+              return;
+            }
+
+            runtime.providerStatus.markChecking(providerId, "search");
+            if (shouldUseSearchWorkerProcesses()) {
+              recordProviderEvent("worker_spawned");
+            }
+
+            const result = await resolveProviderSearchProgressive(
+              providerId,
+              normalizedRequest,
+              providerContext,
+              onProgress,
+              providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
+              (event) => recordProviderEvent(event),
+              () => isSearchJobRunning(runtime, job.id),
+              signal,
+            );
+            if (!isSearchJobRunning(runtime, job.id)) {
+              return;
+            }
+
+            providerStates.set(providerId, {
+              offers: result.offers,
+              warnings: result.warnings,
+              partial: result.partial,
+              completed: true,
+              fresh: true,
+            });
+            runtime.providerStatus.recordSearchResult(providerId, result.partial);
+            startQuotationRateResolution(
+              normalizedRequest,
+              providerIds.flatMap((id) => providerStates.get(id)?.offers ?? []),
+              quotationRateResolver,
+            );
+            logPerfSpan("search.provider", providerStart, {
+              jobId: job.id,
+              providerId,
+              status: "completed",
+              offers: result.offers.length,
+              partial: result.partial,
+            });
+            recordProviderEvent("completed", "completed");
+            /* A provider that completes partial left a day or a GDS out: its
+               list is real but short, and the desk names it for that. */
+            recordProviderSummary("completed", {
+              offers: result.offers.length,
+              warningCount: result.warnings.length,
+              partial: result.partial,
+            });
+            syncSearchProgress();
+          } catch (error) {
+            if (!isSearchJobRunning(runtime, job.id)) {
+              return;
+            }
+
+            runtime.providerStatus.recordSearchFailure(providerId, error);
+            const partialState = providerStates.get(providerId);
+            const errorMessage = providerPublicFailureMessage(providerId, error);
+            providerStates.set(providerId, {
+              offers: partialState?.fresh ? partialState.offers : [],
+              warnings: uniqueStrings([
+                ...(partialState?.fresh ? partialState.warnings : []),
+                errorMessage,
+              ]),
+              partial: true,
+              completed: true,
+              fresh: true,
+            });
+            failedProviderIds.add(providerId);
+            recordProviderEvent("failed", "failed");
+            recordProviderSummary("failed", {
+              offers: 0,
+              warningCount: 1,
+              error: errorMessage,
+            });
+            logPerfSpan("search.provider", providerStart, {
+              jobId: job.id,
+              providerId,
+              status: "failed",
+              error: error instanceof Error ? error.name : "Error",
+            });
+            syncSearchProgress();
+          }
+        });
+
+        const settled = await Promise.allSettled(resolvers);
+        if (!isSearchJobRunning(runtime, job.id)) {
+          disposePendingProgressSync("search", job.id);
           logPerfSpan("search.job", requestStart, {
             jobId: job.id,
-            status: "completed",
+            status: runtime.sessions.getSearchJob(job.id)?.status ?? "missing",
             providers: providerIds.join(","),
-            failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
-            offers: materialized.allOffers.length,
-            partial: materialized.searchMeta.partial,
           });
-        },
-      ).catch((error) => {
-        disposePendingProgressSync("search", job.id, true);
-        failSearchJobForAdmission(runtime, job.id, providerIds, error);
+          return;
+        }
+
+        const sourceOffers = providerIds.flatMap((providerId) => providerStates.get(providerId)?.offers ?? []);
+        const readyOffers = await resolveQuotationReadyOffers(normalizedRequest, sourceOffers, quotationRateResolver);
+        const readyBySource = new Map(sourceOffers.map((offer, index) => [offer, readyOffers[index]]));
+        providerIds.forEach((providerId) => {
+          const state = providerStates.get(providerId);
+          if (state) {
+            state.offers = state.offers.map((offer) => readyBySource.get(offer) ?? offer);
+          }
+        });
+        if (!isSearchJobRunning(runtime, job.id)) {
+          disposePendingProgressSync("search", job.id);
+          return;
+        }
+
+        disposePendingProgressSync("search", job.id);
+        const materialized = syncSearchJob("completed");
         logPerfSpan("search.job", requestStart, {
           jobId: job.id,
-          status: runtime.sessions.getSearchJob(job.id)?.status ?? "missing",
+          status: "completed",
           providers: providerIds.join(","),
-          admissionError: error instanceof Error ? error.name : "Error",
+          failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
+          offers: materialized.allOffers.length,
+          partial: materialized.searchMeta.partial,
         });
-      });
-    }, cacheSeedJob ? cachedBackgroundSearchStartDelayMs() : backgroundSearchStartDelayMs());
+      },
+    );
   }
 
-  return searchJobResponse(job);
+  /* Read again: admission may have marked it queued. */
+  return searchJobResponse(runtime.sessions.getSearchJob(job.id) ?? job);
 }
 
 async function handleMatrixRequest(
@@ -2611,225 +2707,215 @@ async function handleMatrixRequest(
     });
     registerPendingProgressSync("matrix", job.id, matrixProgressSync);
     const syncMatrixProgress = matrixProgressSync.mark;
-    scheduleBackgroundSearchJob(() => {
-      void runtime.searchAdmission.run(
-        {
-          kind: "matrix",
-          jobId: job.id,
-          shouldContinue: () => isMatrixJobRunning(runtime, job.id),
-        },
-        async () => {
-          if (!isMatrixJobRunning(runtime, job.id)) {
-            disposePendingProgressSync("matrix", job.id);
-            return;
+    admitAndRunJob(
+      runtime,
+      { kind: "matrix", id: job.id },
+      { kind: "matrix", sessionKey: searchSessionKey(request) },
+      cachedJob ? cachedBackgroundSearchStartDelayMs() : backgroundSearchStartDelayMs(),
+      async (signal) => {
+        if (!isMatrixJobRunning(runtime, job.id)) {
+          disposePendingProgressSync("matrix", job.id);
+          return;
+        }
+
+        const failedProviderIds = new Set<ProviderId>();
+        const resolvers = providerIds.map(async (providerId) => {
+          const providerStart = startPerfTimer();
+          const providerDiagnosticSeed = providerDiagnostics.find((entry) => entry.providerId === providerId);
+          const recordProviderEvent = (
+            event: ProviderDiagnosticEvent | string,
+            status: ProviderDiagnostics["status"] = "running",
+          ) => {
+            runtime.sessions.updateMatrixJob(job.id, (current) => ({
+              ...current,
+              providerDiagnostics: applyProviderDiagnosticEvent(
+                current.providerDiagnostics,
+                providerId,
+                event,
+                status,
+              ),
+            }));
+          };
+          const recordProviderSummary = (
+            status: ProviderDiagnostics["status"],
+            summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "partial" | "error">,
+          ) => {
+            runtime.sessions.updateMatrixJob(job.id, (current) => ({
+              ...current,
+              providerDiagnostics: applyProviderDiagnosticSummary(
+                current.providerDiagnostics,
+                providerId,
+                status,
+                summary,
+              ),
+            }));
+          };
+          let firstProgressReported = false;
+          const adapter = getProgressiveAdapter(providerId);
+          const currentState = providerStates.get(providerId);
+          const draftResponse = currentState?.response ?? adapter.createMatrixDraft(normalizedRequest, {
+            exactProvider: providerId,
+            coverageMode: normalizedRequest.coverageMode,
+          });
+
+          try {
+            if (!isMatrixJobRunning(runtime, job.id)) {
+              return;
+            }
+
+            runtime.providerStatus.markChecking(providerId, "search");
+            if (shouldUseSearchWorkerProcesses()) {
+              recordProviderEvent("worker_spawned");
+            }
+
+            const result = await resolveProviderMatrixProgressive(
+              providerId,
+              normalizedRequest,
+              providerContext,
+              draftResponse,
+              (cell) => {
+                if (!isMatrixJobRunning(runtime, job.id)) {
+                  return false;
+                }
+
+                if (!firstProgressReported) {
+                  firstProgressReported = true;
+                  recordProviderEvent("first_progress");
+                }
+
+                const providerState = providerStates.get(providerId);
+                if (!providerState) {
+                  return false;
+                }
+
+                updateMatrixDraftCell(providerState.response, cell, providerState.cellIndex);
+                providerState.completed = false;
+                startQuotationRateResolution(
+                  normalizedRequest,
+                  cell.offer ? [cell.offer] : [],
+                  quotationRateResolver,
+                );
+                syncMatrixProgress();
+                return isMatrixJobRunning(runtime, job.id);
+              },
+              providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
+              (event) => recordProviderEvent(event),
+              () => isMatrixJobRunning(runtime, job.id),
+              signal,
+            );
+            if (!isMatrixJobRunning(runtime, job.id)) {
+              return;
+            }
+
+            providerStates.set(providerId, {
+              response: result,
+              completed: true,
+              cellIndex: buildMatrixCellIndex(result.cells),
+            });
+            runtime.providerStatus.recordSearchResult(
+              providerId,
+              result.searchMeta.partial,
+            );
+            startQuotationRateResolution(
+              normalizedRequest,
+              providerIds.flatMap((id) =>
+                providerStates.get(id)?.response.cells.flatMap((entry) => entry.offer ? [entry.offer] : []) ?? []
+              ),
+              quotationRateResolver,
+            );
+            logPerfSpan("matrix.provider", providerStart, {
+              jobId: job.id,
+              providerId,
+              status: "completed",
+              cells: result.cells.length,
+              partial: result.searchMeta.partial,
+            });
+            recordProviderEvent("completed", "completed");
+            recordProviderSummary("completed", {
+              offers: result.cells.filter((cell) => typeof cell.price?.amount === "number").length,
+              warningCount: result.warnings.length,
+              partial: result.searchMeta.partial,
+            });
+          } catch (error) {
+            if (!isMatrixJobRunning(runtime, job.id)) {
+              return;
+            }
+
+            runtime.providerStatus.recordSearchFailure(providerId, error);
+            const partialState = providerStates.get(providerId);
+            const partialResponse = partialState?.response ?? draftResponse;
+            const errorMessage = providerPublicFailureMessage(providerId, error);
+            const failedResponse = materializeFailedMatrixResponse(partialResponse, errorMessage);
+            providerStates.set(providerId, {
+              response: failedResponse,
+              completed: true,
+              cellIndex: partialState?.cellIndex ?? buildMatrixCellIndex(failedResponse.cells),
+            });
+            failedProviderIds.add(providerId);
+            recordProviderEvent("failed", "failed");
+            recordProviderSummary("failed", {
+              offers: 0,
+              warningCount: 1,
+              error: errorMessage,
+            });
+            logPerfSpan("matrix.provider", providerStart, {
+              jobId: job.id,
+              providerId,
+              status: "failed",
+              error: error instanceof Error ? error.name : "Error",
+            });
           }
 
-          const failedProviderIds = new Set<ProviderId>();
-          const resolvers = providerIds.map(async (providerId) => {
-        const providerStart = startPerfTimer();
-        const providerDiagnosticSeed = providerDiagnostics.find((entry) => entry.providerId === providerId);
-        const recordProviderEvent = (
-          event: ProviderDiagnosticEvent | string,
-          status: ProviderDiagnostics["status"] = "running",
-        ) => {
-          runtime.sessions.updateMatrixJob(job.id, (current) => ({
-            ...current,
-            providerDiagnostics: applyProviderDiagnosticEvent(
-              current.providerDiagnostics,
-              providerId,
-              event,
-              status,
-            ),
-          }));
-        };
-        const recordProviderSummary = (
-          status: ProviderDiagnostics["status"],
-          summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "partial" | "error">,
-        ) => {
-          runtime.sessions.updateMatrixJob(job.id, (current) => ({
-            ...current,
-            providerDiagnostics: applyProviderDiagnosticSummary(
-              current.providerDiagnostics,
-              providerId,
-              status,
-              summary,
-            ),
-          }));
-        };
-        let firstProgressReported = false;
-        const adapter = getProgressiveAdapter(providerId);
-        const currentState = providerStates.get(providerId);
-        const draftResponse = currentState?.response ?? adapter.createMatrixDraft(normalizedRequest, {
-          exactProvider: providerId,
-          coverageMode: normalizedRequest.coverageMode,
+          if (isMatrixJobRunning(runtime, job.id)) {
+            syncMatrixProgress();
+          }
         });
 
-        try {
-          if (!isMatrixJobRunning(runtime, job.id)) {
-            return;
-          }
-
-          runtime.providerStatus.markChecking(providerId, "search");
-          if (shouldUseSearchWorkerProcesses()) {
-            recordProviderEvent("worker_spawned");
-          }
-
-          const result = await resolveProviderMatrixProgressive(
-            providerId,
-            normalizedRequest,
-            providerContext,
-            draftResponse,
-            (cell) => {
-              if (!isMatrixJobRunning(runtime, job.id)) {
-                return false;
-              }
-
-              if (!firstProgressReported) {
-                firstProgressReported = true;
-                recordProviderEvent("first_progress");
-              }
-
-              const providerState = providerStates.get(providerId);
-              if (!providerState) {
-                return false;
-              }
-
-              updateMatrixDraftCell(providerState.response, cell, providerState.cellIndex);
-              providerState.completed = false;
-              startQuotationRateResolution(
-                normalizedRequest,
-                cell.offer ? [cell.offer] : [],
-                quotationRateResolver,
-              );
-              syncMatrixProgress();
-              return isMatrixJobRunning(runtime, job.id);
-            },
-            providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
-            (event) => recordProviderEvent(event),
-            () => isMatrixJobRunning(runtime, job.id),
-          );
-          if (!isMatrixJobRunning(runtime, job.id)) {
-            return;
-          }
-
-          providerStates.set(providerId, {
-            response: result,
-            completed: true,
-            cellIndex: buildMatrixCellIndex(result.cells),
-          });
-          runtime.providerStatus.recordSearchResult(
-            providerId,
-            result.searchMeta.partial,
-          );
-          startQuotationRateResolution(
-            normalizedRequest,
-            providerIds.flatMap((id) =>
-              providerStates.get(id)?.response.cells.flatMap((entry) => entry.offer ? [entry.offer] : []) ?? []
-            ),
-            quotationRateResolver,
-          );
-          logPerfSpan("matrix.provider", providerStart, {
-            jobId: job.id,
-            providerId,
-            status: "completed",
-            cells: result.cells.length,
-            partial: result.searchMeta.partial,
-          });
-          recordProviderEvent("completed", "completed");
-          recordProviderSummary("completed", {
-            offers: result.cells.filter((cell) => typeof cell.price?.amount === "number").length,
-            warningCount: result.warnings.length,
-            partial: result.searchMeta.partial,
-          });
-        } catch (error) {
-          if (!isMatrixJobRunning(runtime, job.id)) {
-            return;
-          }
-
-          runtime.providerStatus.recordSearchFailure(providerId, error);
-          const partialState = providerStates.get(providerId);
-          const partialResponse = partialState?.response ?? draftResponse;
-          const errorMessage = providerPublicFailureMessage(providerId, error);
-          const failedResponse = materializeFailedMatrixResponse(partialResponse, errorMessage);
-          providerStates.set(providerId, {
-            response: failedResponse,
-            completed: true,
-            cellIndex: partialState?.cellIndex ?? buildMatrixCellIndex(failedResponse.cells),
-          });
-          failedProviderIds.add(providerId);
-          recordProviderEvent("failed", "failed");
-          recordProviderSummary("failed", {
-            offers: 0,
-            warningCount: 1,
-            error: errorMessage,
-          });
-          logPerfSpan("matrix.provider", providerStart, {
-            jobId: job.id,
-            providerId,
-            status: "failed",
-            error: error instanceof Error ? error.name : "Error",
-          });
-        }
-
-        if (isMatrixJobRunning(runtime, job.id)) {
-          syncMatrixProgress();
-        }
-      });
-
-          const settled = await Promise.allSettled(resolvers);
-          if (!isMatrixJobRunning(runtime, job.id)) {
-            disposePendingProgressSync("matrix", job.id);
-            logPerfSpan("matrix.job", requestStart, {
-              jobId: job.id,
-              status: runtime.sessions.getMatrixJob(job.id)?.status ?? "missing",
-              providers: providerIds.join(","),
-            });
-            return;
-          }
-
-          const sourceOffers = providerIds.flatMap((providerId) =>
-            providerStates.get(providerId)?.response.cells.flatMap((cell) => cell.offer ? [cell.offer] : []) ?? []
-          );
-          const readyOffers = await resolveQuotationReadyOffers(normalizedRequest, sourceOffers, quotationRateResolver);
-          const readyBySource = new Map(sourceOffers.map((offer, index) => [offer, readyOffers[index]]));
-          providerIds.forEach((providerId) => {
-            const state = providerStates.get(providerId);
-            if (state) {
-              state.response.cells = state.response.cells.map((cell) => cell.offer
-                ? { ...cell, offer: readyBySource.get(cell.offer) ?? cell.offer }
-                : cell);
-            }
-          });
-          if (!isMatrixJobRunning(runtime, job.id)) {
-            disposePendingProgressSync("matrix", job.id);
-            return;
-          }
-
+        const settled = await Promise.allSettled(resolvers);
+        if (!isMatrixJobRunning(runtime, job.id)) {
           disposePendingProgressSync("matrix", job.id);
-          const materialized = syncMatrixJob("completed");
           logPerfSpan("matrix.job", requestStart, {
             jobId: job.id,
-            status: "completed",
+            status: runtime.sessions.getMatrixJob(job.id)?.status ?? "missing",
             providers: providerIds.join(","),
-            failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
-            cells: materialized.cells.length,
-            partial: materialized.searchMeta.partial,
           });
-        },
-      ).catch((error) => {
-        disposePendingProgressSync("matrix", job.id, true);
-        failMatrixJobForAdmission(runtime, job.id, providerIds, error);
+          return;
+        }
+
+        const sourceOffers = providerIds.flatMap((providerId) =>
+          providerStates.get(providerId)?.response.cells.flatMap((cell) => cell.offer ? [cell.offer] : []) ?? []
+        );
+        const readyOffers = await resolveQuotationReadyOffers(normalizedRequest, sourceOffers, quotationRateResolver);
+        const readyBySource = new Map(sourceOffers.map((offer, index) => [offer, readyOffers[index]]));
+        providerIds.forEach((providerId) => {
+          const state = providerStates.get(providerId);
+          if (state) {
+            state.response.cells = state.response.cells.map((cell) => cell.offer
+              ? { ...cell, offer: readyBySource.get(cell.offer) ?? cell.offer }
+              : cell);
+          }
+        });
+        if (!isMatrixJobRunning(runtime, job.id)) {
+          disposePendingProgressSync("matrix", job.id);
+          return;
+        }
+
+        disposePendingProgressSync("matrix", job.id);
+        const materialized = syncMatrixJob("completed");
         logPerfSpan("matrix.job", requestStart, {
           jobId: job.id,
-          status: runtime.sessions.getMatrixJob(job.id)?.status ?? "missing",
+          status: "completed",
           providers: providerIds.join(","),
-          admissionError: error instanceof Error ? error.name : "Error",
+          failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
+          cells: materialized.cells.length,
+          partial: materialized.searchMeta.partial,
         });
-      });
-    }, cachedJob ? cachedBackgroundSearchStartDelayMs() : backgroundSearchStartDelayMs());
+      },
+    );
   }
 
-  return json(matrixJobResponse(job));
+  /* Read again: admission may have marked it queued. */
+  return json(matrixJobResponse(runtime.sessions.getMatrixJob(job.id) ?? job));
 }
 
 /* The routes that write the session cookie themselves. Renewal has to keep its
@@ -2840,6 +2926,12 @@ const SESSION_WRITING_PATHS = new Set([
   "/logout",
   "/api/auth/login",
   "/api/auth/logout",
+]);
+
+/* What an open page asks on its own, with nobody at it: a desk left open is
+   not somebody working, so these never slide the session. */
+const PASSIVE_PATHS = new Set([
+  "/api/search-capacity",
 ]);
 
 function alreadyWritesWebSessionCookie(response: Response): boolean {
@@ -2857,7 +2949,8 @@ function alreadyWritesWebSessionCookie(response: Response): boolean {
  */
 export async function routeRequest(request: Request): Promise<Response> {
   const response = await routeApplicationRequest(request);
-  if (SESSION_WRITING_PATHS.has(new URL(request.url).pathname)) {
+  const { pathname } = new URL(request.url);
+  if (SESSION_WRITING_PATHS.has(pathname) || PASSIVE_PATHS.has(pathname)) {
     return response;
   }
 
@@ -3052,6 +3145,21 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
         },
       },
     );
+  }
+
+  /*
+   * The shared capacity, for the desk's indicator: answered at once when its
+   * version is not the caller's, otherwise held until it changes or the wait
+   * runs out, whichever is first.
+   */
+  if (request.method === "GET" && url.pathname === "/api/search-capacity") {
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
+    }
+
+    const waitMs = parseJobPollWaitMs(url.searchParams.get("wait"), CAPACITY_POLL_MAX_WAIT_MS);
+    await runtime.searchAdmission.waitForChange(url.searchParams.get("version") ?? undefined, waitMs, request.signal);
+    return json(runtime.searchAdmission.snapshot(), { headers: { "Cache-Control": "no-store" } });
   }
 
   if (request.method === "POST" && url.pathname === "/api/search") {

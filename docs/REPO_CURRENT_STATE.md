@@ -140,9 +140,9 @@ The React UI must not display simulated controls. The following remain outside t
 - provider readiness uses closed states and reasons; search evidence outranks fresh prewarm evidence, and Click and Book Plus context-only warm-up cannot claim readiness. An observation stays fresh for two prewarm intervals plus a minute (21 minutes by default), or five minutes with prewarm off
 - the USD/PEN rate available from Agil propagates to sibling offers; if a domestic Costamar route remains alone, daily rate resolution occurs within the search and does not query flights again
 - external rate lookup has a short timeout and allows one final retry after a failed prefetch; if unresolved, the search finishes without marking the offer quotable
-- global search admission uses capacity units: default budget `4`, exact `1`, range `2`, matrix `2`, default queue `8`, and default timeout `120000ms`
+- search admission shares 7 capacity units in the runner (`src/search-admission.ts`, measured values with no settings): an exact search costs 1, a flexible round-trip matrix or a range of up to ten days 2, a range of up to a month 3, and a longer range everything heavy work may hold. Heavy work (anything but an exact search) holds at most 5 units, so two units always start an exact search at once — one for each agent — and two month-long ranges, a sweep's months included, never run together. A search that does not fit waits and is never refused for capacity; its job says `queued` until it starts. Exact searches start first-come, first-served, and past their reserve only while no heavy search waits; heavy searches start fairest session first (the signed-in browser holding the fewest heavy units, then the one served longest ago), each session's own in order, and a heavy search that does not fit yet is not overtaken by another heavy one. `GET /api/search-capacity` answers the occupancy
 - the web proxy streams the runner response without buffering the complete body and keeps its timeout during the stream: `FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS`, 15 s by default and never less, at most 60 s. Every request to the runner goes out on a connection of its own, so none is sent on a connection the runner is closing. A read the runner refuses while it restarts is asked once more 500 ms later; a write is never sent twice
-- capacity is released only when provider work finishes; session and purchase-path caches remain in `src/session-store.ts` until their operational TTL
+- capacity is released once, when a job's provider work settles; a stopped job leaves the queue at once, or has its provider requests aborted in the workers (the job's abort signal reaches `fetchProvider` and the Agil in-flight queue) and sends none again. Session and purchase-path caches remain in `src/session-store.ts` until their operational TTL
 - the price-reuse TTL is anchored to `searchMeta.completedAt`, not polling; session idle retention remains separate to preserve redirects
 - completed resident jobs share 128 MiB by default; a timer reevaluates LRU when the five-second grace expires, in addition to 60-second maintenance, leaves excess jobs disk-only with compatible APIs and `/r/<id>`, and deletes them at TTL expiry. Running jobs are not eligible
 - range/matrix deltas travel from worker to router without resending accumulated state; RAM, polling, and SQLite publish snapshots at geometric milestones coalesced for 900 ms, plus durable completion. Purchase paths persist independently to keep redirects visible between milestones
@@ -235,12 +235,15 @@ Deployed revisions and the live service inventory are maintained in `D:\Dev\VPS\
 
 ## Current Technical Debt
 
-- two latency settings stay at conservative values, as deliberate settings
-  rather than oversights: `SEARCH_RANGE_SEARCH_CONCURRENCY` defaults to 2 days
-  of a range at a time, and the Agil in-flight ceiling makes 3 safe to try
-  (`.env.example` sets 4 for local runs); intermediate milestone coalescing is
-  900 ms in `src/http-router.ts` and could drop to about 400 ms if the UI
-  benefits. Change one at a time and keep the measurement
+- `SEARCH_RANGE_SEARCH_CONCURRENCY` defaults to 4 days of a range at a time.
+  Admission runs one month-long range at a time, and at 4 days a two-month
+  sweep against the fakes took 30.4 s, what two months of 2 days each took
+  before (29.8 s), with the same 28 Agil requests in flight and a lower runner
+  peak (757 MiB against 923). Real providers have not been measured at it;
+  after the deployment, watch a sweep's months and the Agil answers. The
+  intermediate milestone coalescing is 900 ms in `src/http-router.ts` and
+  could drop to about 400 ms if the UI benefits. Change one at a time and keep
+  the measurement
 - `frontend/src/App.tsx` concentrates substantial composition, filtering, and selection
 - `src/local-agil.ts` concentrates session handling, client behavior, pricing, and mapping
 - `src/local-costamar.ts` concentrates B2B automation, client behavior, mapping, and Click and Book Plus redirects
@@ -263,4 +266,4 @@ Deployed revisions and the live service inventory are maintained in `D:\Dev\VPS\
   `rawRefs.webSessionId` as a reusable secret; it remains inside the existing
   backend boundary and must not be exposed to the UI
 - the mobile plates are built: one shell with three layouts at the 720 and 1100 frontiers, the merged origin/destination card, the retractable toolbar, and filters, calendar, suggestions, passengers, month picker and offer as bottom sheets. Arbitrary per-leg recombination is the one design promise still unmet, because no provider fixture supports it — see [`REDESIGN_CONTRACT.md`](./REDESIGN_CONTRACT.md)
-- migratory search queries every day in every selected month against Agil and Click and Book Plus without fare filters; it processes months in batches through `FLY_DESK_MIGRATION_CONCURRENT_MONTHS` (default `2`, at most `12`; `.env.example` sets 4 for local runs), which must be monitored if usage volume increases
+- migratory search queries every day in every selected month against Agil and Click and Book Plus without fare filters. The desk asks for `FLY_DESK_MIGRATION_CONCURRENT_MONTHS` months at once (default `2`, at most `12`), each once the one before it has its job, and the runner starts one month-long range at a time: the second month waits ready, and a larger value only adds waiting jobs

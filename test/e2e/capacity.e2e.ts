@@ -9,6 +9,7 @@ import {
   matrixOffers,
   openPurchasePath,
   purchasePathOf,
+  readCapacity,
   readMatrixJob,
   readSearchJob,
   searchOffers,
@@ -16,12 +17,13 @@ import {
   startMatrix,
   startSearch,
   type ApiSession,
+  type SearchCapacity,
   type SearchJob,
 } from "./support/api-client.ts";
 import { startedJob, waitForResults } from "./support/flows.ts";
 import { defineSuite } from "./support/harness.ts";
 import { fakeCbplusToken, FAKE_CBPLUS_TERMINAL_ID, type OfferSpec } from "./support/fixtures.ts";
-import type { RecordedRequest } from "./support/fake-upstream.ts";
+import type { Gate, RecordedRequest } from "./support/fake-upstream.ts";
 import {
   day,
   eventually,
@@ -34,13 +36,13 @@ import {
   writeSqlite,
   type RouteFilter,
 } from "./support/scenario.ts";
-import { notice, searchForm, searchLink } from "./support/ui.ts";
+import { searchForm, searchLink } from "./support/ui.ts";
 
 /*
- * The runner under load and across restarts: the admission budget and its
- * queue, the Agil in-flight ceiling, what survives a restart of every unit and
- * a rollback, the cache file compacted at start, and a Click and Book Plus token
- * renewed on disk while everything runs.
+ * The runner under load and across restarts: the shared capacity and the queue
+ * in front of it, the Agil in-flight ceiling, what survives a restart of every
+ * unit and a rollback, the cache file compacted at start, and a Click and Book
+ * Plus token renewed on disk while everything runs.
  */
 
 /* The token as the platform installs it: in the file every process re-reads
@@ -52,16 +54,11 @@ const TOKEN_A = fakeCbplusToken(FAKE_CBPLUS_TERMINAL_ID, Date.now() - 60_000);
 writeFileSync(TOKEN_FILE, TOKEN_A);
 afterAll(() => rmSync(tokenDir, { recursive: true, force: true }));
 
-const MAX_QUEUED = 3;
-/* The runner's own words for a search it could not admit (`src/http-router.ts`). */
-const QUEUE_FULL = "La cola de búsquedas está llena. Intenta nuevamente en unos minutos.";
-const QUEUE_TIMEOUT = "La búsqueda esperó demasiado por capacidad disponible.";
 const suite = defineSuite({
   file: import.meta.filename,
   stack: {
     env: { CBPLUS_TOKEN_FILE: TOKEN_FILE, CBPLUS_TOKEN: TOKEN_A },
     serviceEnv: {
-      runner: { FLY_DESK_SEARCH_MAX_QUEUED: String(MAX_QUEUED) },
       /* Always check the brand host, so the token a redirect carries is seen. */
       redirect: { CBPLUS_REDIRECT_TRUST_USABLE_TOKEN: "0" },
     },
@@ -80,145 +77,160 @@ function callsFor(requests: readonly RecordedRequest[], route: RouteFilter): Rec
   return requests.filter((request) => isProviderSearch(request) && matchesRoute(request, route));
 }
 
-async function providerStatuses(api: ApiSession, jobId: string): Promise<string[]> {
-  const job = await readSearchJob(api, jobId);
-  return (job.providerDiagnostics ?? []).map((entry) => entry.status);
+/* ---- Capacity ---- */
+
+/*
+ * The runner's budget (`src/search-admission.ts`): 7 units, of which heavy
+ * work holds at most 5 and 2 stay for exact searches. An exact search costs
+ * 1, a matrix or a range of up to ten days 2, a range of up to a month 3.
+ */
+
+/** A search held at its providers: every provider request on `route` waits for `release`. */
+function holdRoute(fake: typeof suite.fake, route: RouteFilter): Gate {
+  return fake.hold("*", (request) => isProviderSearch(request) && matchesRoute(request, route));
 }
 
-/* ---- Admission ---- */
-
-/** Two range searches (2 units each) that fill the budget of 4 until released. */
-async function fillTheBudget(api: ApiSession, fake: typeof suite.fake, first: number) {
-  const blockers = [
-    { origin: "LIM", destination: "SCL", days: [day(first), day(first + 1)] },
-    { origin: "LIM", destination: "BOG", days: [day(first + 2), day(first + 3)] },
-  ];
-  const gates = blockers.map((blocker) => fake.hold("*", (request) =>
-    isProviderSearch(request)
-    && request.query?.origin === blocker.origin
-    && request.query.destination === blocker.destination
-    && blocker.days.includes(request.query.departureDate)));
-  const jobs: SearchJob[] = [];
-  for (const blocker of blockers) {
-    jobs.push(await startSearch(api, searchPayloads.range(blocker.origin, blocker.destination, blocker.days[0]!, blocker.days[1]!)));
-  }
-  await eventually(() => assert.ok(gates.every((gate) => gate.seen > 0), "a blocker never reached its providers"));
-  return { jobs, gates };
-}
-
-suite.test("searches beyond the capacity budget wait in arrival order, and a small one never overtakes a large one", async (scope) => {
-  const { fake } = scope;
-  const api = await scope.api();
-  const { jobs: blockers, gates } = await fillTheBudget(api, fake, 100);
-
-  /* Queued behind the budget, in this order: an exact search (1 unit), a
-     range (2 units), another exact search (1 unit). */
-  const routes = {
-    a: { origin: "LIM", destination: "CUZ", departureDate: day(120) },
-    b: { origin: "LIM", destination: "AQP" },
-    c: { origin: "LIM", destination: "PIU", departureDate: day(123) },
+/** The counts of a capacity reading, for comparing. */
+function occupancy(capacity: SearchCapacity) {
+  return {
+    activeUnits: capacity.activeUnits,
+    activeSearches: capacity.activeSearches,
+    queuedSearches: capacity.queuedSearches,
   };
-  const holdA = fake.hold("*", (request) => isProviderSearch(request) && matchesRoute(request, routes.a));
-  const a = await startSearch(api, searchPayloads.exact("LIM", "CUZ", day(120)));
-  const b = await startSearch(api, searchPayloads.range("LIM", "AQP", day(121), day(122)));
-  const c = await startSearch(api, searchPayloads.exact("LIM", "PIU", day(123)));
-  for (const job of [a, b, c]) {
-    assert.deepEqual(await providerStatuses(api, job.searchJobId), ["queued", "queued"], "a search started past the budget");
-  }
-  assert.equal(fake.requests((request) => isProviderSearch(request) && [routes.a, routes.b, routes.c].some((route) => matchesRoute(request, route))).length, 0);
+}
 
-  /* One blocker ends: two units free. A takes one and is held by its
-     provider; B needs two, so it waits — and C, which would fit, waits
-     behind B rather than overtaking it. */
-  gates[0]!.release();
-  await eventually(() => assert.ok(holdA.seen > 0, "A never started"));
-  assert.deepEqual(await providerStatuses(api, c.searchJobId), ["queued", "queued"], "C overtook B");
-  assert.deepEqual(await providerStatuses(api, b.searchJobId), ["queued", "queued"]);
+async function capacityBackToIdle(api: ApiSession): Promise<void> {
+  await eventually(async () => {
+    assert.deepEqual(occupancy(await readCapacity(api)), { activeUnits: 0, activeSearches: 0, queuedSearches: 0 });
+  }, { message: "the capacity came back to idle" });
+}
 
-  gates[1]!.release();
-  holdA.release();
-  for (const job of [...blockers, a, b, c]) {
-    const { job: finished } = await followSearchJob(api, job);
-    assert.equal(finished.searchStatus, "completed");
-  }
-  const firstCall = (route: RouteFilter) => Math.min(...callsFor(fake.requests(), route).map((request) => request.seq));
-  assert.ok(firstCall(routes.a) < firstCall(routes.b), "A did not reach its providers before B");
-  assert.ok(firstCall(routes.b) < firstCall(routes.c), "B did not reach its providers before C");
-});
+async function isQueued(api: ApiSession, job: SearchJob): Promise<boolean> {
+  return (await readSearchJob(api, job.searchJobId)).queued === true;
+}
 
-suite.test("a full queue refuses the next search, and a cancelled waiter gives its place back at once", async (scope) => {
+suite.test("a search that does not fit waits instead of being refused, and one stopped while it waits leaves at once", async (scope) => {
   const { fake } = scope;
   const api = await scope.api();
-  const { jobs: blockers, gates } = await fillTheBudget(api, fake, 130);
+  /* Two short ranges hold 4 of the 5 heavy units at their providers. */
+  const gates = [holdRoute(fake, { origin: "LIM", destination: "SCL" }), holdRoute(fake, { origin: "LIM", destination: "BOG" })];
+  const blockers = [
+    await startSearch(api, searchPayloads.range("LIM", "SCL", day(100), day(101))),
+    await startSearch(api, searchPayloads.range("LIM", "BOG", day(100), day(101))),
+  ];
+  await eventually(() => assert.ok(gates.every((gate) => gate.seen > 0), "a blocker never reached its providers"));
+  assert.ok(blockers.every((job) => job.queued === false));
 
+  /* Nine more: more than the runner ever let wait, and none of them refused. */
   const waiting: SearchJob[] = [];
-  for (let index = 0; index < MAX_QUEUED; index += 1) {
-    waiting.push(await startSearch(api, searchPayloads.exact("LIM", "CUZ", day(140 + index))));
+  for (let index = 0; index < 9; index += 1) {
+    waiting.push(await startSearch(api, searchPayloads.range("LIM", "CUZ", day(110 + index * 2), day(111 + index * 2))));
   }
-  /* The one too many comes from the desk, which says why in the notice. */
-  const { page } = await scope.signedInPage("/");
-  const overflow = await startedJob<SearchJob>(page, async () => {
-    await page.goto(`${scope.stack.baseUrl}${searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "CUZ", departure: day(150) })}`);
-  });
-  const refused = await eventually(async () => {
-    const job = await readSearchJob(api, overflow.searchJobId);
-    assert.equal(job.searchStatus, "failed");
-    return job;
-  });
-  assert.match(refused.error ?? "", /La cola de búsquedas está llena\./);
-  await notice.error(page).waitFor();
-  assert.equal(await notice.error(page).innerText(), QUEUE_FULL, "the desk did not say why the search was refused");
+  for (const job of waiting) {
+    assert.equal(job.searchStatus, "running");
+    assert.equal(job.queued, true, "a search past the budget started");
+  }
+  assert.deepEqual(occupancy(await readCapacity(api)), { activeUnits: 4, activeSearches: 2, queuedSearches: 9 });
+  assert.equal(callsFor(fake.requests(), { origin: "LIM", destination: "CUZ" }).length, 0);
 
-  /* The second waiter leaves; the next search takes its place instead of
-     being refused. */
-  const leaving = waiting[1]!;
-  const cancelled = await api.json<SearchJob>("POST", `/api/search/${encodeURIComponent(leaving.searchJobId)}/cancel`, {});
-  assert.equal(cancelled.searchStatus, "cancelled");
-  const replacement = await startSearch(api, searchPayloads.exact("LIM", "CUZ", day(151)));
-  assert.equal((await readSearchJob(api, replacement.searchJobId)).searchStatus, "running");
-  assert.deepEqual(await providerStatuses(api, replacement.searchJobId), ["queued", "queued"]);
+  /* One is stopped while it waits: it leaves the queue at once. */
+  const leaving = waiting[3]!;
+  const stopped = await api.json<SearchJob>("POST", `/api/search/${encodeURIComponent(leaving.searchJobId)}/cancel`, {});
+  assert.equal(stopped.searchStatus, "cancelled");
+  assert.equal(stopped.queued, false);
+  assert.equal((await readCapacity(api)).queuedSearches, 8);
 
   gates.forEach((gate) => gate.release());
-  for (const job of [...blockers, waiting[0]!, waiting[2]!, replacement]) {
+  for (const job of [...blockers, ...waiting.filter((candidate) => candidate !== leaving)]) {
     const { job: finished } = await followSearchJob(api, job);
     assert.equal(finished.searchStatus, "completed");
+    assert.equal(finished.queued, false);
   }
-  assert.equal((await readSearchJob(api, leaving.searchJobId)).searchStatus, "cancelled");
-  assert.equal((await readSearchJob(api, overflow.searchJobId)).searchStatus, "failed");
-  for (const neverRan of [leaving, overflow]) {
-    const departureDate = (neverRan === leaving ? day(141) : day(150));
-    assert.equal(callsFor(fake.requests(), { origin: "LIM", destination: "CUZ", departureDate }).length, 0, `${departureDate} reached a provider`);
-  }
+  assert.equal(callsFor(fake.requests(), { origin: "LIM", destination: "CUZ", departureDate: day(116) }).length, 0, "the stopped search reached a provider");
+  await capacityBackToIdle(api);
 });
 
-suite.test("a search that waits past the queue timeout fails with its reason", async (scope) => {
-  const { fake, stack } = scope;
-  /* The timeout is the runner's; a short one for this test only. */
-  await stack.restart("runner", { env: { FLY_DESK_SEARCH_QUEUE_TIMEOUT_MS: "1500" } });
-  try {
-    const api = await scope.api();
-    const { jobs: blockers, gates } = await fillTheBudget(api, fake, 160);
-    /* The waiter is the desk's, which says why in the notice. */
-    const { page } = await scope.signedInPage("/");
-    const waiter = await startedJob<SearchJob>(page, async () => {
-      await page.goto(`${stack.baseUrl}${searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "CUZ", departure: day(170) })}`);
-    });
-    const timedOut = await eventually(async () => {
-      const job = await readSearchJob(api, waiter.searchJobId);
-      assert.equal(job.searchStatus, "failed");
-      return job;
-    }, { timeoutMs: 10_000 });
-    assert.match(timedOut.error ?? "", /La búsqueda esperó demasiado/);
-    await notice.error(page).waitFor();
-    assert.equal(await notice.error(page).innerText(), QUEUE_TIMEOUT, "the desk did not say why the search failed");
-    assert.equal(callsFor(fake.requests(), { origin: "LIM", destination: "CUZ", departureDate: day(170) }).length, 0);
-    gates.forEach((gate) => gate.release());
-    for (const job of blockers) {
-      assert.equal((await followSearchJob(api, job)).job.searchStatus, "completed");
-    }
-  } finally {
-    await stack.restart("runner", { env: { FLY_DESK_SEARCH_QUEUE_TIMEOUT_MS: undefined } });
+suite.test("each agent starts an exact search at once whatever runs, and the agent holding less capacity goes first", async (scope) => {
+  const { fake } = scope;
+  const agentA = await scope.api();
+  const agentB = await scope.api();
+  const route = (destination: string): RouteFilter => ({ origin: "LIM", destination });
+
+  /* A's two short ranges hold 4 of the 5 heavy units. */
+  const gateA1 = holdRoute(fake, route("SCL"));
+  const gateA2 = holdRoute(fake, route("BOG"));
+  await startSearch(agentA, searchPayloads.range("LIM", "SCL", day(120), day(121)));
+  await startSearch(agentA, searchPayloads.range("LIM", "BOG", day(120), day(121)));
+  await eventually(() => assert.ok(gateA1.seen > 0 && gateA2.seen > 0, "A's ranges never reached their providers"));
+
+  /* A asks for a third range, then B for one: neither fits. */
+  const gateA3 = holdRoute(fake, route("CUZ"));
+  const gateB1 = holdRoute(fake, route("AQP"));
+  const a3 = await startSearch(agentA, searchPayloads.range("LIM", "CUZ", day(122), day(123)));
+  const b1 = await startSearch(agentB, searchPayloads.range("LIM", "AQP", day(122), day(123)));
+  assert.equal(a3.queued, true);
+  assert.equal(b1.queued, true);
+
+  /* Exact searches keep two units of their own: one each starts at once. */
+  const gateExactB = holdRoute(fake, route("PIU"));
+  const gateExactA = holdRoute(fake, route("IQT"));
+  const exactB = await startSearch(agentB, searchPayloads.exact("LIM", "PIU", day(124)));
+  const exactA = await startSearch(agentA, searchPayloads.exact("LIM", "IQT", day(124)));
+  assert.equal(exactB.queued, false, "B's exact search waited behind heavy work");
+  assert.equal(exactA.queued, false, "A's exact search waited behind heavy work");
+  await eventually(() => assert.ok(gateExactB.seen > 0 && gateExactA.seen > 0, "an exact search never reached its providers"));
+  /* A third one would fit the budget, but not the reserve: while heavy work
+     waits it does not take the units a waiting range needs. */
+  const exactA2 = await startSearch(agentA, searchPayloads.exact("LIM", "TPP", day(124)));
+  assert.equal(exactA2.queued, true, "an exact search past the reserve overtook waiting heavy work");
+
+  /* One of A's ranges ends: B, who holds nothing heavy, goes before A's
+     earlier range. */
+  gateA1.release();
+  await eventually(() => assert.ok(gateB1.seen > 0, "B's range never started"));
+  assert.equal(await isQueued(agentA, a3), true, "A's range overtook B's");
+  assert.equal(gateA3.seen, 0);
+  assert.equal(await isQueued(agentA, exactA2), true);
+
+  /* A's other range ends: now A's third one starts, and with no heavy work
+     waiting any more, so does the exact search past the reserve. */
+  gateA2.release();
+  await eventually(() => assert.ok(gateA3.seen > 0, "A's third range never started"));
+  await eventually(async () => assert.equal(await isQueued(agentA, exactA2), false, "the exact search past the reserve never started"));
+
+  for (const gate of [gateA3, gateB1, gateExactA, gateExactB]) {
+    gate.release();
   }
+  await capacityBackToIdle(agentA);
+});
+
+suite.test("two month-long ranges never run at once, and the waiting one is not overtaken by a shorter one", async (scope) => {
+  const { fake } = scope;
+  const agentA = await scope.api();
+  const agentB = await scope.api();
+  const agentC = await scope.api();
+  /* A's month holds 3 heavy units, its first day waiting at the providers. */
+  const firstDayA = holdRoute(fake, { origin: "LIM", destination: "MIA", departureDate: day(130) });
+  const monthA = await startSearch(agentA, searchPayloads.range("LIM", "MIA", day(130), day(159)));
+  await eventually(() => assert.ok(firstDayA.seen > 0, "A's month never started"));
+  assert.equal(monthA.queued, false);
+
+  /* B's month does not fit beside it. C's short range would, but B asked
+     first and holds as little as C: nothing heavy overtakes B's month. */
+  const monthB = await startSearch(agentB, searchPayloads.range("LIM", "MAD", day(130), day(159)));
+  const rangeC = await startSearch(agentC, searchPayloads.range("LIM", "BOG", day(130), day(136)));
+  assert.equal(monthB.queued, true);
+  assert.equal(rangeC.queued, true, "a shorter range overtook the waiting month");
+  assert.deepEqual(occupancy(await readCapacity(agentA)), { activeUnits: 3, activeSearches: 1, queuedSearches: 2 });
+
+  firstDayA.release();
+  for (const [api, job] of [[agentA, monthA], [agentB, monthB], [agentC, rangeC]] as const) {
+    assert.equal((await followSearchJob(api, job, 120_000)).job.searchStatus, "completed");
+  }
+  const lastOfA = Math.max(...callsFor(fake.requests(), { destination: "MIA" }).map((request) => request.respondedAt ?? Number.POSITIVE_INFINITY));
+  const firstOfB = Math.min(...callsFor(fake.requests(), { destination: "MAD" }).map((request) => request.receivedAt));
+  assert.ok(firstOfB >= lastOfA, "B's month reached a provider before A's month had finished");
+  await capacityBackToIdle(agentA);
 });
 
 suite.test("Agil never has more /mv/search calls in flight than its ceiling", async (scope) => {
