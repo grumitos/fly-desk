@@ -233,6 +233,55 @@ suite.test("two month-long ranges never run at once, and the waiting one is not 
   await capacityBackToIdle(agentA);
 });
 
+/* The unit's cgroup as the runner reads it (`src/unit-memory.ts`), written by
+   the test: a limit of 900 MiB, like `MemoryHigh`, and the anonymous memory
+   the test says the unit holds. */
+function fakeCgroup(): { dir: string; holding: (mib: number) => void } {
+  const dir = mkdtempSync(join(tmpdir(), "fly-desk-e2e-cgroup-"));
+  writeFileSync(join(dir, "memory.high"), String(900 * 1024 * 1024));
+  const holding = (mib: number) => writeFileSync(join(dir, "memory.stat"), `anon ${mib * 1024 * 1024}\nfile 0\n`);
+  holding(100);
+  return { dir, holding };
+}
+
+suite.test("beside other heavy work a heavy search waits while the unit's memory is short, and one alone starts anyway", async (scope) => {
+  const { fake, stack } = scope;
+  const cgroup = fakeCgroup();
+  await stack.restart("runner", { env: { FLY_DESK_CGROUP_DIR: cgroup.dir } });
+  try {
+    const agentA = await scope.api();
+    const agentB = await scope.api();
+    const gateA = holdRoute(fake, { origin: "LIM", destination: "SCL" });
+    await startSearch(agentA, searchPayloads.range("LIM", "SCL", day(220), day(221)));
+    await eventually(() => assert.ok(gateA.seen > 0, "A's range never started"));
+
+    /* The units would take B's range beside A's; the memory would not. */
+    cgroup.holding(800);
+    const gateB = holdRoute(fake, { origin: "LIM", destination: "BOG" });
+    const rangeB = await startSearch(agentB, searchPayloads.range("LIM", "BOG", day(220), day(221)));
+    assert.equal(rangeB.queued, true, "a heavy search started beside heavy work with the unit's memory short");
+    const exactB = await startSearch(agentB, searchPayloads.exact("LIM", "CUZ", day(222)));
+    assert.equal(exactB.queued, false, "an exact search waited for memory");
+
+    /* The memory frees while A's range still runs: B's starts. */
+    cgroup.holding(200);
+    await eventually(() => assert.ok(gateB.seen > 0, "B's range never started once the memory freed"));
+
+    /* Alone, a heavy search starts whatever the memory says. */
+    gateA.release();
+    gateB.release();
+    await capacityBackToIdle(agentA);
+    cgroup.holding(850);
+    const lone = await startSearch(agentA, searchPayloads.range("LIM", "CUZ", day(225), day(226)));
+    assert.equal(lone.queued, false, "a heavy search alone waited for memory");
+    assert.equal((await followSearchJob(agentA, lone)).job.searchStatus, "completed");
+    await capacityBackToIdle(agentA);
+  } finally {
+    await stack.restart("runner", { env: { FLY_DESK_CGROUP_DIR: undefined } });
+    rmSync(cgroup.dir, { recursive: true, force: true });
+  }
+});
+
 suite.test("Agil never has more /mv/search calls in flight than its ceiling", async (scope) => {
   const { fake } = scope;
   /* Six cells, seven GDS ids each: 42 calls wanted at once, 32 allowed. */

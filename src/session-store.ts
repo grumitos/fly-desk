@@ -41,8 +41,18 @@ function persistedRestoreBudgetBytes(configured?: number): number {
     ? parsed
     : PERSISTED_SEARCH_CACHE_RESTORE_DEFAULT_BUDGET_BYTES;
 }
-const COMPLETED_SEARCH_SESSION_RESIDENT_DEFAULT_BUDGET_BYTES = 128 * 1024 * 1024;
+/*
+ * The completed jobs a running desk keeps in memory, counted in the bytes they
+ * are persisted as. In memory a job costs about four times that: a month of a
+ * migratory sweep persists as 32 MiB and holds 119 MiB of the runner's heap.
+ * So this keeps about one month of fares resident, and a sweep's earlier
+ * months are read from disk when asked for, instead of four of them staying
+ * in a runner whose memory throttles at 900 MiB.
+ */
+const COMPLETED_SEARCH_SESSION_RESIDENT_DEFAULT_BUDGET_BYTES = 32 * 1024 * 1024;
 const COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS = 5_000;
+/* An eviction this large is worth a collection of its own. */
+const EVICTION_COLLECT_MIN_BYTES = 8 * 1024 * 1024;
 const SESSION_STORE_PERSIST_DEBOUNCE_MS = 180;
 /*
  * Durability policy, half two: this is the age a finished job may reach before
@@ -1603,6 +1613,13 @@ export class SearchSessionStore {
       evictedBytes += candidate.bytes;
     }
 
+    /* What an evicted job held goes back to the system now, not at the next
+       collection: a sweep evicts one month as the next one grows, and with
+       this collection the runner came back to 170 MiB after a two-month sweep,
+       against 400 without it. */
+    if (evictedBytes >= EVICTION_COLLECT_MIN_BYTES) {
+      Bun.gc(true);
+    }
     if (evictedJobs > 0) {
       console.warn(
         `Fly Desk resident cache evicted completed jobs: jobs=${evictedJobs} payloadBytes=${evictedBytes} budgetBytes=${this.completedResidentBudgetBytes}`,

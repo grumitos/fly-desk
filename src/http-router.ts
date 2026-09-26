@@ -1773,8 +1773,15 @@ function publicMatrixCell(cell: MatrixCell): MatrixCell | Omit<MatrixCell, "offe
  * the answer is small and is serialized per poll, because provider diagnostics
  * change within a revision. The cache keeps the revisions polled last, up to a
  * byte budget, rather than one copy per resident job.
+ *
+ * A long list is not serialized in one piece: it is written to the answer a
+ * batch of offers at a time, as the connection takes it. A month of a sweep is
+ * fourteen thousand fares and 28 MiB of JSON, and serializing it whole took
+ * the runner about 150 MiB at once, just as the month completed.
  */
-const PUBLIC_OFFERS_JSON_CACHE_MAX_BYTES = 32 * 1024 * 1024;
+const PUBLIC_OFFERS_JSON_CACHE_MAX_BYTES = 16 * 1024 * 1024;
+const LONG_OFFER_LIST = 2_000;
+const STREAMED_OFFERS_BATCH = 200;
 const publicOffersJsonCache = new Map<readonly CanonicalOffer[], Uint8Array<ArrayBuffer>>();
 let publicOffersJsonCacheBytes = 0;
 const utf8 = new TextEncoder();
@@ -1801,6 +1808,33 @@ function publicOffersJson(allOffers: readonly CanonicalOffer[]): Uint8Array<Arra
     publicOffersJsonCacheBytes -= value.byteLength;
   }
   return members;
+}
+
+/* The answer `{...head, "allOffers": [...], "scheduleGroups": [...]}`, written
+   as the connection takes it; `head` is the rest of the answer, less its brace. */
+function streamedOffersBody(head: string, allOffers: readonly CanonicalOffer[]): ReadableStream<Uint8Array> {
+  let next = 0;
+  let done = false;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (done) {
+        controller.close();
+        return;
+      }
+
+      const end = Math.min(allOffers.length, next + STREAMED_OFFERS_BATCH);
+      let chunk = next === 0 ? `${head},"allOffers":[` : "";
+      for (let index = next; index < end; index += 1) {
+        chunk += `${index === 0 ? "" : ","}${JSON.stringify(publicOffer(allOffers[index]!))}`;
+      }
+      next = end;
+      if (next === allOffers.length) {
+        chunk += `],"scheduleGroups":${JSON.stringify(buildOfferScheduleGroups(allOffers))}}`;
+        done = true;
+      }
+      controller.enqueue(utf8.encode(chunk));
+    },
+  });
 }
 
 function matrixJobResponse(
@@ -2080,7 +2114,9 @@ function searchJobResponse(job: SearchJobRecord, sinceRevision?: number): Respon
   });
   const body = unchanged
     ? base
-    : new Blob([base.slice(0, -1), ",", publicOffersJson(job.allOffers), "}"]);
+    : job.allOffers.length >= LONG_OFFER_LIST
+      ? streamedOffersBody(base.slice(0, -1), job.allOffers)
+      : new Blob([base.slice(0, -1), ",", publicOffersJson(job.allOffers), "}"]);
   return new Response(body, {
     status: 200,
     headers: { "Content-Type": "application/json; charset=utf-8" },
@@ -2586,6 +2622,12 @@ async function handleSearchRequest(
 
         disposePendingProgressSync("search", job.id);
         const materialized = syncSearchJob("completed");
+        /* A long list leaves behind the copies it was built from. Collected now,
+           before its answer and its row are written, they do not stack on the
+           completion of a month of a sweep. */
+        if (materialized.allOffers.length >= LONG_OFFER_LIST) {
+          Bun.gc(true);
+        }
         logPerfSpan("search.job", requestStart, {
           jobId: job.id,
           status: "completed",

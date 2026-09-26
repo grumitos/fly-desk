@@ -1,28 +1,34 @@
 /*
  * Search admission: which searches run now, and in what order the rest wait.
  *
- * Every search costs capacity units by what it makes the runner and the
- * providers carry, measured against the E2E fakes at 470 fares a day (Agil 50
- * per GDS, Click and Book Plus 120):
+ * Every search costs capacity units by what it makes the search unit (the
+ * runner and its pooled workers) and the providers carry, measured against
+ * the E2E fakes at 470 fares a day (Agil 50 per GDS, Click and Book Plus 120):
  *
  * - an exact search, 1: nine provider requests, eight in flight, a fraction of
  *   a second of runner CPU and about 20 MiB;
  * - a flexible round-trip matrix, 2: it fills the Agil in-flight ceiling (32)
- *   for a few seconds, but keeps one fare a cell and barely moves the runner's
- *   memory;
- * - a range of up to ten days, 2: nine requests a day, two days at a time; a
+ *   for a few seconds, but keeps one fare a cell and barely moves memory;
+ * - a range of up to ten days, 2: nine requests a day, three days at a time; a
  *   seven-day range took the runner about 120 MiB above rest at its peak;
- * - a range of up to a month, 3: a migratory sweep's month is one, and 30 days
- *   of fares took the runner about 530 MiB above rest;
- * - a longer range, everything heavy work may hold: its fares alone approach
- *   the runner's memory ceiling (`MemoryHigh=900M`), so it runs beside
- *   nothing heavier than an exact search.
+ * - a range of up to a month, 3: a migratory sweep's month is one, and the unit
+ *   went from about 190 MiB at rest to about 770 MiB as a month of fares
+ *   completed;
+ * - a longer range, everything heavy work may hold: it runs beside nothing
+ *   heavier than an exact search.
  *
  * The budget is 7 units, 2 of them reserved for exact searches: heavy work
  * (anything but an exact search) holds at most 5. That runs a sweep's month
  * beside another agent's short range or matrix, never two months at once —
- * which peaked the runner at 923 MiB — and lets each of the two agents start
- * an exact search at any moment, whatever runs.
+ * which took the unit past 1.3 GiB against its `MemoryHigh=900M` — and lets
+ * each of the two agents start an exact search at any moment, whatever runs.
+ *
+ * Units are an estimate, so memory has the last word where it can be read
+ * (`unit-memory.ts`): a heavy search starts beside other heavy work only while
+ * the unit's memory — what it holds now, or what the heavy searches running
+ * are expected to reach, whichever is more — leaves room under 90% of its
+ * limit for what this one is expected to add. A heavy search alone always
+ * starts, so the wait is never longer than the heavy work already running.
  *
  * Nothing is refused for capacity: a search that does not fit waits, and
  * leaves the queue only when its job is stopped (see `http-router.ts`, which
@@ -35,6 +41,8 @@
  * searches keep their order. A heavy search that does not fit yet is not
  * overtaken by another heavy one, so the largest search is never starved.
  */
+
+import { createUnitMemoryGauge, type UnitMemoryGauge } from "./unit-memory";
 
 export type SearchAdmissionKind = "exact" | "range" | "matrix";
 
@@ -51,6 +59,16 @@ const SHORT_RANGE_MAX_DAY_SEARCHES = 10;
 const MONTH_RANGE_MAX_DAY_SEARCHES = 31;
 /* Who asked, when nobody signed in did: the API token or a trusted loopback. */
 const UNSIGNED_SESSION_KEY = "unsigned";
+
+const MIB = 1024 * 1024;
+/* What a heavy search adds to the unit's memory at its peak: about 20 MiB a
+   day of a range (a month, from 190 to 770 MiB), and 60 MiB for a matrix. */
+const RANGE_DAY_PEAK_BYTES = 20 * MIB;
+const MATRIX_PEAK_BYTES = 60 * MIB;
+const HEAVY_MEMORY_SHARE = 0.9;
+/* Memory frees without telling anyone: a heavy search held back by it is
+   looked at again this often. */
+const MEMORY_RECHECK_MS = 1_000;
 
 export interface SearchAdmissionRequest {
   kind: SearchAdmissionKind;
@@ -84,6 +102,8 @@ export interface SearchCapacitySnapshot {
 
 interface SearchAdmissionDiagnostics extends Omit<SearchCapacitySnapshot, "version"> {
   exactReservedUnits: number;
+  /** The unit's anonymous memory against its limit, where it can be read. */
+  memory?: { usedBytes: number; limitBytes: number };
   active: Array<{ kind: SearchAdmissionKind; jobId?: string; costUnits: number; activeMs: number }>;
   queued: Array<{ kind: SearchAdmissionKind; jobId?: string; costUnits: number; queuedMs: number }>;
 }
@@ -93,6 +113,7 @@ interface ActiveEntry {
   jobId?: string;
   sessionKey: string;
   costUnits: number;
+  peakBytes: number;
   heavy: boolean;
   startedAtMs: number;
 }
@@ -102,6 +123,7 @@ interface QueuedEntry {
   jobId?: string;
   sessionKey: string;
   costUnits: number;
+  peakBytes: number;
   heavy: boolean;
   enqueuedAtMs: number;
   admit: () => void;
@@ -128,6 +150,17 @@ export function searchCostUnits(kind: SearchAdmissionKind, daySearches = 1): num
   }
 }
 
+function searchPeakBytes(kind: SearchAdmissionKind, daySearches = 1): number {
+  switch (kind) {
+    case "exact":
+      return 0;
+    case "matrix":
+      return MATRIX_PEAK_BYTES;
+    case "range":
+      return daySearches * RANGE_DAY_PEAK_BYTES;
+  }
+}
+
 function unitsOf(entries: Iterable<{ costUnits: number }>): number {
   let units = 0;
   for (const entry of entries) {
@@ -137,6 +170,8 @@ function unitsOf(entries: Iterable<{ costUnits: number }>): number {
 }
 
 export class SearchAdmissionController {
+  private readonly memory: UnitMemoryGauge;
+  private memoryRecheck: ReturnType<typeof setTimeout> | undefined;
   private readonly active = new Map<symbol, ActiveEntry>();
   /* In arrival order; `pickNext` decides who leaves it. */
   private readonly queued: QueuedEntry[] = [];
@@ -147,6 +182,10 @@ export class SearchAdmissionController {
   private revision = 0;
   private readonly changeWaiters = new Set<() => void>();
   private stoppingMessage: string | undefined;
+
+  constructor(memory: UnitMemoryGauge = createUnitMemoryGauge()) {
+    this.memory = memory;
+  }
 
   acquire(request: SearchAdmissionRequest): Promise<SearchAdmissionLease> {
     if (this.stoppingMessage !== undefined) {
@@ -170,6 +209,7 @@ export class SearchAdmissionController {
         jobId: request.jobId,
         sessionKey,
         costUnits,
+        peakBytes: searchPeakBytes(request.kind, request.daySearches),
         heavy: request.kind !== "exact",
         enqueuedAtMs,
         admit: () => {
@@ -194,6 +234,7 @@ export class SearchAdmissionController {
   /** No search starts from now on; the waiting ones are turned away with `message`. */
   stopAccepting(message: string): void {
     this.stoppingMessage = message;
+    clearTimeout(this.memoryRecheck);
     const turnedAway = this.queued.splice(0);
     if (turnedAway.length > 0) {
       this.forgetIdleSessions();
@@ -253,6 +294,7 @@ export class SearchAdmissionController {
     return {
       ...snapshot,
       exactReservedUnits: EXACT_RESERVED_UNITS,
+      memory: this.memory(),
       active: [...this.active.values()].map((entry) => ({
         kind: entry.kind,
         jobId: entry.jobId,
@@ -272,7 +314,8 @@ export class SearchAdmissionController {
    * The next search to start out of `queued`, or none. An exact search goes
    * first whenever it fits: within its reserve always, past it only while no
    * heavy search waits. Then the fairest session's oldest heavy search, if it
-   * fits; if it does not, no heavy search starts.
+   * fits in the units and, beside other heavy work, in memory; if it does not,
+   * no heavy search starts.
    */
   private pickNext(): QueuedEntry | undefined {
     const active = [...this.active.values()];
@@ -308,7 +351,35 @@ export class SearchAdmissionController {
       }
     }
 
-    return fairest && heavyUnits + fairest.costUnits <= HEAVY_LIMIT_UNITS ? fairest : undefined;
+    if (!fairest || heavyUnits + fairest.costUnits > HEAVY_LIMIT_UNITS) {
+      return undefined;
+    }
+    if (heavyUnits > 0 && !this.memoryAllows(fairest, active)) {
+      this.recheckMemoryLater();
+      return undefined;
+    }
+    return fairest;
+  }
+
+  private memoryAllows(entry: QueuedEntry, active: readonly ActiveEntry[]): boolean {
+    const reading = this.memory();
+    if (!reading) {
+      return true;
+    }
+
+    const expected = active.reduce((total, running) => total + (running.heavy ? running.peakBytes : 0), 0);
+    return Math.max(reading.usedBytes, expected) + entry.peakBytes <= HEAVY_MEMORY_SHARE * reading.limitBytes;
+  }
+
+  private recheckMemoryLater(): void {
+    if (this.memoryRecheck) {
+      return;
+    }
+    this.memoryRecheck = setTimeout(() => {
+      this.memoryRecheck = undefined;
+      this.startQueued();
+    }, MEMORY_RECHECK_MS);
+    this.memoryRecheck.unref?.();
   }
 
   private isFairer(candidate: QueuedEntry, current: QueuedEntry, heavyUnitsBySession: ReadonlyMap<string, number>): boolean {
@@ -328,6 +399,7 @@ export class SearchAdmissionController {
       jobId: entry.jobId,
       sessionKey: entry.sessionKey,
       costUnits: entry.costUnits,
+      peakBytes: entry.peakBytes,
       heavy: entry.heavy,
       startedAtMs,
     });
