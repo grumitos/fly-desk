@@ -423,6 +423,21 @@ export function hasValidWebSession(request: Request, nowMs = Date.now()): boolea
   return readWebSession(request, nowMs) !== undefined;
 }
 
+/*
+ * Which signed-in browser sent a request, stable while its session slides: the
+ * moment it signed in, which a renewal keeps. The two agents share a password,
+ * so this, not a user name, is what tells their searches apart when capacity
+ * is shared out. It is a timestamp, not a secret, and only a valid session
+ * has one.
+ */
+export function webSessionHolder(request: Request, nowMs = Date.now()): string | undefined {
+  if (!isWebAuthEnabled()) {
+    return undefined;
+  }
+  const session = readWebSession(request, nowMs);
+  return session ? `web-${session.issuedAtMs}` : undefined;
+}
+
 export function hasValidRedirectSession(request: Request, nowMs = Date.now()): boolean {
   if (!isWebAuthEnabled()) {
     return false;

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import type { FakeOp, FakeUpstream, RecordedRequest } from "./fake-upstream.ts";
+import assert from "node:assert/strict";
+import type { FakeOp, FakeUpstream, Gate, RecordedRequest } from "./fake-upstream.ts";
 import { formatCaller } from "./provider-origins.ts";
 
 /*
@@ -149,6 +150,32 @@ export function providerSearches(fake: FakeUpstream, route: RouteFilter = {}, si
     (request.op === "agil.search" || request.op === "cbplus.search")
     && request.receivedAt >= since
     && matchesRoute(request, route));
+}
+
+/** Holds every provider search on `route` at the fake until `release`: a search that stays running. */
+export function holdProviderSearches(fake: FakeUpstream, route: RouteFilter): Gate {
+  return fake.hold("*", (request) => (request.op === "agil.search" || request.op === "cbplus.search") && matchesRoute(request, route));
+}
+
+/* What a stopped search would ask next, it would have asked within this
+   window; nothing asked in it is nothing asked at all. */
+export const STOPPED_WORK_WINDOW_MS = 2_000;
+
+/**
+ * The search on `route` has stopped at its providers: every request it had
+ * open was hung up on (none is left open and none got an answer after), and
+ * it asks nothing more. Returns the requests it made.
+ */
+export async function assertProviderWorkStopped(fake: FakeUpstream, route: RouteFilter): Promise<RecordedRequest[]> {
+  const made = await eventually(() => {
+    const requests = providerSearches(fake, route);
+    const open = requests.filter((request) => request.status === undefined && !request.aborted);
+    assert.deepEqual(open.map((request) => request.seq), [], "a provider request of the stopped search is still open");
+    return requests;
+  }, { message: "the stopped search hung up on its providers" });
+  await sleep(STOPPED_WORK_WINDOW_MS);
+  assert.equal(providerSearches(fake, route).length, made.length, "the stopped search asked a provider again");
+  return made;
 }
 
 /** The most requests of `op` the fake held open at once. */

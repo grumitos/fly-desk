@@ -73,7 +73,14 @@ import {
 } from "./core/types";
 import { rankLocationSuggestions } from "./core/location-ranking";
 import { recordProviderFirstHttpRequest } from "./provider-diagnostics";
-import { describeErrorChain, fetchProvider } from "./provider-fetch";
+import {
+  currentProviderJobSignal,
+  describeErrorChain,
+  fetchProvider,
+  isProviderRequestCancelled,
+  outsideProviderJob,
+  ProviderRequestCancelledError,
+} from "./provider-fetch";
 import { providerDegradedReasonFromError, providerPublicFailureMessage } from "./provider-status";
 
 interface BrowserStorageSnapshot {
@@ -324,6 +331,8 @@ export const AGIL_CONCURRENCY = Object.freeze({
  * This FIFO semaphore is their ceiling: a slot is held from before the request
  * starts until its body has been consumed, and only /mv/search goes through it
  * (start-search, the token mint and the location suggestions stay unthrottled).
+ * A request whose search stops while it waits for a slot leaves the queue at
+ * once, so a stopped matrix does not hold back the searches queued behind it.
  */
 interface AgilInflightLimiter {
   acquire: () => Promise<() => void>;
@@ -363,13 +372,26 @@ function createAgilInflightLimiter(resolveLimit: () => number): AgilInflightLimi
 
   return {
     acquire: () => {
+      const signal = currentProviderJobSignal();
+      if (signal?.aborted) {
+        return Promise.reject(new ProviderRequestCancelledError("Agil search slot"));
+      }
       if (waiters.length === 0 && inFlight < resolveLimit()) {
         inFlight += 1;
         return Promise.resolve(makeRelease());
       }
 
-      return new Promise<() => void>((resolve) => {
-        waiters.push(() => resolve(makeRelease()));
+      return new Promise<() => void>((resolve, reject) => {
+        const leave = () => {
+          waiters = waiters.filter((entry) => entry !== waiter);
+          reject(new ProviderRequestCancelledError("Agil search slot"));
+        };
+        const waiter = () => {
+          signal?.removeEventListener("abort", leave);
+          resolve(makeRelease());
+        };
+        waiters.push(waiter);
+        signal?.addEventListener("abort", leave, { once: true });
       });
     },
     get inFlight() {
@@ -478,7 +500,7 @@ async function searchLocalAgilExactWithRetry(request: SearchRequest): Promise<Pr
     try {
       return await searchLocalAgilExact(request);
     } catch (error) {
-      if (attempt >= AGIL_RANGE_DAY_RETRY_ATTEMPTS || error instanceof AgilNoGdsAnsweredError) {
+      if (attempt >= AGIL_RANGE_DAY_RETRY_ATTEMPTS || error instanceof AgilNoGdsAnsweredError || isProviderRequestCancelled(error)) {
         throw error;
       }
 
@@ -1967,8 +1989,9 @@ async function getAgilSession(): Promise<AgilSessionData> {
     return cachedSession;
   }
 
+  /* Every search waits on the one load, so no single search's stop aborts it. */
   if (!pendingSessionPromise) {
-    pendingSessionPromise = loadAgilSession(now)
+    pendingSessionPromise = outsideProviderJob(() => loadAgilSession(now))
       .finally(() => {
         pendingSessionPromise = undefined;
       });
@@ -1980,7 +2003,7 @@ async function getAgilSession(): Promise<AgilSessionData> {
 export async function prewarmLocalAgilSession(): Promise<void> {
   const now = Date.now();
   if (!pendingSessionPromise) {
-    pendingSessionPromise = loadAgilSession(now, { forceRefresh: true })
+    pendingSessionPromise = outsideProviderJob(() => loadAgilSession(now, { forceRefresh: true }))
       .finally(() => {
         pendingSessionPromise = undefined;
       });
@@ -2869,6 +2892,11 @@ async function searchGroupsWithGds(
  * the error chain behind it, none of which the desk receives.
  */
 function logAgilOmission(part: string, request: SearchRequest, error: unknown, startedAt: number): void {
+  /* A part of a search that was stopped was not omitted: nobody wants it. */
+  if (isProviderRequestCancelled(error)) {
+    return;
+  }
+
   console.warn(
     `Agil ${part} omitted: ${requestSummary(request)} `
     + `reason=${providerDegradedReasonFromError(error)} `

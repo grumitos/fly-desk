@@ -208,11 +208,8 @@ const EXACT_TRANSLATIONS: Record<string, string> = {
   "Selecting a cell runs a full Click and Book Plus exact search for offers.": "Selecciona una fecha para ver las ofertas disponibles.",
   "Search cancelled by user.": "Búsqueda detenida por el usuario.",
   "Search stopped because Fly Desk was restarted.": "Búsqueda detenida por reinicio de Fly Desk.",
-  /* The runner's admission refusals are written for the desk already, and are
-     the whole reason a search that never started failed. */
-  "La cola de búsquedas está llena. Intenta nuevamente en unos minutos.": "La cola de búsquedas está llena. Intenta nuevamente en unos minutos.",
-  "La búsqueda esperó demasiado por capacidad disponible.": "La búsqueda esperó demasiado por capacidad disponible.",
-  "La búsqueda fue cancelada antes de iniciar.": "La búsqueda fue cancelada antes de iniciar.",
+  "Search stopped because its page stopped following it.": "Búsqueda detenida porque la página dejó de seguirla.",
+  "Search failed unexpectedly.": "La búsqueda se detuvo por un error inesperado. Intenta nuevamente.",
 }
 
 /* `validateSearchDateInPolicy` labels every date field of the request. */
@@ -656,6 +653,7 @@ type BackendMatrixJobResponse = {
   cells?: MatrixCell[]
   recommendations?: string[]
   providerDiagnostics?: SearchJobResponse["providerDiagnostics"]
+  queued?: boolean
 }
 
 export function toBackendPayload(request: SearchRequest, sortMode: SortMode): BackendSearchPayload {
@@ -975,6 +973,7 @@ function normalizeMatrixJob(data: BackendMatrixJobResponse, sortMode: SortMode):
     sortMode,
     request,
     unchanged: data.unchanged,
+    queued: data.queued === true,
     allOffers,
     searchMeta: data.searchMeta
       ? { ...data.searchMeta, warnings: rawMetaWarnings.map(translateApiMessage) }
@@ -1332,6 +1331,50 @@ export async function startMatrix(
   return normalizeMatrixJob(data, sortMode)
 }
 
+/** The runner's shared search capacity, as the top bar draws it. */
+export type SearchCapacity = {
+  version: string
+  capacityUnits: number
+  activeUnits: number
+  activeSearches: number
+  queuedSearches: number
+}
+
+function capacityCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined
+}
+
+/**
+ * Reads the shared capacity: at once without `version`, otherwise held by the
+ * server until it is no longer `version` or `waitMs` runs out. A page left
+ * open asks this on its own, so an answer it cannot use, a refused session
+ * included, only fails the read: it never sends the page to sign in.
+ */
+export async function readSearchCapacity(version: string | undefined, waitMs: number, signal: AbortSignal): Promise<SearchCapacity> {
+  const query = version ? `?version=${encodeURIComponent(version)}&wait=${waitMs}` : ""
+  const response = await fetch(`/api/search-capacity${query}`, { signal, cache: "no-store" })
+  if (!response.ok) {
+    throw new Error(`The capacity answered ${response.status}.`)
+  }
+
+  const data = await response.json() as Record<string, unknown>
+  const capacityUnits = capacityCount(data.capacityUnits)
+  const activeUnits = capacityCount(data.activeUnits)
+  const activeSearches = capacityCount(data.activeSearches)
+  const queuedSearches = capacityCount(data.queuedSearches)
+  if (
+    typeof data.version !== "string"
+    || !capacityUnits
+    || activeUnits === undefined
+    || activeSearches === undefined
+    || queuedSearches === undefined
+  ) {
+    throw new Error("The capacity answered an unreadable reading.")
+  }
+
+  return { version: data.version, capacityUnits, activeUnits, activeSearches, queuedSearches }
+}
+
 export async function pollMatrix(
   jobId: string,
   sortMode: SortMode,
@@ -1407,10 +1450,16 @@ export async function startMigrationSearch(
         ])
       : warnings
 
+    /* A sweep waits while every month it has asked for waits: once one has
+       started, a month waiting its turn is a sweep under way, not a queued one. */
+    const askedMonths = monthResults.filter((result) => result.job)
     return {
       searchJobId: `migration-${requestedAt}`,
       searchComplete,
       searchStatus: searchComplete ? "completed" : "running",
+      queued: !searchComplete
+        && askedMonths.length > 0
+        && askedMonths.every((result) => result.job?.queued === true && !result.complete),
       revision: Math.max(1, ...monthResults.map((result) => result.job?.revision ?? 0)),
       sortMode,
       request,
@@ -1448,6 +1497,11 @@ export async function startMigrationSearch(
 
   emitProgress()
 
+  /* The runner starts one month-long range at a time, in the order it is asked
+     for them: each month is asked for once the one before it has its job, so
+     the sweep runs in calendar order while the next month already waits. */
+  let previousStart: Promise<unknown> = Promise.resolve()
+
   await runWithConcurrency(
     ranges,
     MIGRATION_CONCURRENT_MONTHS,
@@ -1473,12 +1527,17 @@ export async function startMigrationSearch(
         emitProgress()
       }
 
-      try {
+      const started = previousStart.then(() => {
         throwIfAborted(options.signal)
-        const first = await startSearch(migrationRequestForMonth(request, range), "cheapest", {
+        return startSearch(migrationRequestForMonth(request, range), "cheapest", {
           onJobStart: options.onJobStart,
           recordLocationUsage: index === 0,
         })
+      })
+      previousStart = started.catch(() => undefined)
+
+      try {
+        const first = await started
         throwIfAborted(options.signal)
         record(first)
         await followJob(first, (since, signal) => pollSearch(first.searchJobId, since, signal), {

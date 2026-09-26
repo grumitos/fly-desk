@@ -81,6 +81,9 @@ export function isSearchServiceRoute(method: string, pathname: string): boolean 
   if (normalizedMethod === "GET" && pathname === "/api/provider-status") {
     return true;
   }
+  if (normalizedMethod === "GET" && pathname === "/api/search-capacity") {
+    return true;
+  }
   if (normalizedMethod === "GET" && /^\/api\/search\/[^/]+$/.test(pathname)) {
     return true;
   }
@@ -254,11 +257,15 @@ export async function maybeProxySearchServiceRequest(
 
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   const body = hasBody ? request.body : undefined;
+  const timeout = AbortSignal.timeout(resolveProxyTimeoutMsForRequest(url, options.timeoutMs));
   const requestInit: RequestInit & { duplex?: "half" } = {
     method: request.method,
     headers,
     body,
-    signal: AbortSignal.timeout(resolveProxyTimeoutMsForRequest(url, options.timeoutMs)),
+    /* A read the browser gives up on (a long poll whose page moved on) ends
+       here too, so the runner does not hold it for nobody. A write is left to
+       finish: the job it creates or stops must not depend on who waits. */
+    signal: hasBody ? timeout : AbortSignal.any([timeout, request.signal]),
     duplex: body ? "half" : undefined,
     /* Every request on a connection of its own. Bun's fetch keeps an idle
        connection until the runner closes it and can hand it out as that close
@@ -277,7 +284,10 @@ export async function maybeProxySearchServiceRequest(
       headers: responseHeadersFromProxy(response),
     });
   } catch (error) {
-    logSearchServiceProxyFailure(error, target, request, hasApiToken);
+    /* Nobody is left to answer, and nothing failed. */
+    if (!request.signal.aborted) {
+      logSearchServiceProxyFailure(error, target, request, hasApiToken);
+    }
     return searchServiceUnavailableResponse();
   }
 }

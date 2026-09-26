@@ -174,6 +174,8 @@ export interface SearchJobResponse extends SearchResponse {
   unchanged?: boolean
   /** Why the job ended in `failed`. */
   error?: string
+  /** Running, and still waiting for search capacity: nothing has been asked of a provider yet. */
+  queued?: boolean
 }
 
 export type ProviderDiagnosticEvent = CoreProviderDiagnostics["events"][number]

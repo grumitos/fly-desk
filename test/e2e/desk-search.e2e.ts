@@ -122,7 +122,7 @@ suite.test("a shared round-trip link survives the sign-in gate and carries the s
 
   await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: 6, total: 6 }), { message: "six merged results" });
   await searchForm.submit(page).waitFor();
-  await page.waitForLoadState("networkidle");
+  await tracked.apiSettled();
 
   /* Exactly one search reached each provider: one Agil start, one call per
      GDS id, one Click and Book Plus call. */

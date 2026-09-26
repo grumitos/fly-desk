@@ -9,10 +9,10 @@ import {
   type MatrixJob,
   type SearchJob,
 } from "./support/api-client.ts";
-import { runSearch, waitForResults } from "./support/flows.ts";
+import { runSearch, waitForIdleCapacity, waitForResults } from "./support/flows.ts";
 import { defineSuite, type TestScope, type TrackedContext } from "./support/harness.ts";
 import type { OfferSpec } from "./support/fixtures.ts";
-import { day, eventually, providerSearches, sleep } from "./support/scenario.ts";
+import { assertProviderWorkStopped, day, eventually, providerSearches } from "./support/scenario.ts";
 import { announcement, detail, notice, quotation, readCards, results, searchForm, searchLink } from "./support/ui.ts";
 
 /*
@@ -143,7 +143,8 @@ suite.test("a token refused inside a 200 stops a range at the first refusal and 
   const { fake } = scope;
   fake.setFlights("both", { origin: "LIM", destination: "SCL" }, SANTIAGO);
   fake.fail("cbplus.search", REFUSED_TOKEN);
-  const days = [day(40), day(41), day(42), day(43)];
+  /* More days than Click and Book Plus asks for at once. */
+  const days = Array.from({ length: 6 }, (_, index) => day(40 + index));
   const { page } = await scope.signedInPage(searchLink({ mode: "flexible", trip: "one-way", origin: "LIM", destination: "SCL", departureStart: days[0], departureEnd: days.at(-1) }));
   await searchForm.submit(page).waitFor();
   const started = await runSearch<SearchJob>(page);
@@ -266,10 +267,6 @@ function stopRange(first: number): { link: string; days: string[] } {
   };
 }
 
-/* The pooled worker hears about a cancellation on its client's 500 ms poll
-   (`src/search-worker-client.ts`); there is nothing to observe until then. */
-const CANCELLATION_PROPAGATION_MS = 2_000;
-
 suite.test("stopping a search halts its fan-out, keeps what it had, and running it again starts from that", async (scope) => {
   const { fake } = scope;
   fake.setFlights("both", { origin: "LIM", destination: "SCL" }, SANTIAGO);
@@ -292,21 +289,18 @@ suite.test("stopping a search halts its fan-out, keeps what it had, and running 
   });
   assert.equal(new URL(cancel.url).searchParams.get("cachePartial"), "1");
 
-  /* Only once the worker has heard of it do the providers answer. */
-  await sleep(CANCELLATION_PROPAGATION_MS);
-  const asked = new Set(providerSearches(fake).map((request) => request.query?.departureDate));
+  /* The stop reaches the workers, which hang up on every request the search
+     still had open at its providers, ask for nothing more, and give the
+     capacity back. */
+  const asked = await assertProviderWorkStopped(fake, { origin: "LIM", destination: "SCL" });
+  const held = asked.filter((request) => request.query?.departureDate !== days[0]);
+  assert.ok(held.length > 0 && held.every((request) => request.aborted), "no request of the stopped search was hung up on");
+  assert.ok(new Set(asked.map((request) => request.query?.departureDate)).size < STOP_DAYS, "every day was asked");
+  const api = await scope.api();
+  await waitForIdleCapacity(api);
   later.release();
-  await eventually(() => assert.ok(providerSearches(fake).every((request) => request.status !== undefined), "a held request never answered"));
-  await sleep(CANCELLATION_PROPAGATION_MS);
-  const askedAfter = new Set(providerSearches(fake).map((request) => request.query?.departureDate));
-  assert.deepEqual([...askedAfter].sort(), [...asked].sort(), "a stopped search asked a provider for another day");
-  assert.ok(asked.size < STOP_DAYS, `all ${asked.size} days were asked`);
-  /* In-flight provider calls are not aborted: the pooled worker cancels
-     cooperatively, so what was asked runs to its answer. */
-  assert.equal(fake.requests((request) => request.aborted).length, 0);
 
   /* The backend kept the partial list as a finished, reusable result. */
-  const api = await scope.api();
   const stopped = await readSearchJob(api, started.searchJobId);
   assert.equal(stopped.searchStatus, "completed");
   assert.equal(stopped.searchMeta?.searchState, "search_partial");
@@ -345,6 +339,8 @@ suite.test("closing the tab mid-search cancels it and keeps its purchase paths w
   assert.equal(closed.searchStatus, "completed");
   assert.equal(closed.searchMeta?.searchState, "search_partial");
   assert.ok((closed.searchMeta?.warnings ?? []).includes("Search stopped because the page was refreshed."));
+  await assertProviderWorkStopped(fake, { origin: "LIM", destination: "SCL" });
+  await waitForIdleCapacity(api);
 
   /* A fare the page had already shown can still be bought. */
   const agilOffer = searchOffers(closed).find((offer) => offer.providerSource === "agil-local");
@@ -392,4 +388,6 @@ suite.test("stopping before the search request has returned still cancels the se
     const job = await readSearchJob(api, startedJobId);
     assert.notEqual(job.searchStatus, "running", "the stopped search is still running on the server");
   }, { timeoutMs: 5_000 });
+  await assertProviderWorkStopped(fake, { origin: "LIM", destination: "SCL" });
+  await waitForIdleCapacity(api);
 });

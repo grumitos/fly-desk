@@ -17,21 +17,26 @@ import {
 import { startProviderPrewarmLoop } from "./provider-prewarm";
 import { isSearchServiceDelegationConfigured } from "./search-service-client";
 import { startSearchWorkerPool, stopSearchWorkerPool } from "./search-worker-client";
-import { flushPendingProgressForShutdown } from "./http-router";
+import { abortLiveJobs, flushPendingProgressForShutdown } from "./http-router";
 
 const STARTUP_BACKGROUND_TASK_DELAY_MS = 10_000;
 const SESSION_MAINTENANCE_INTERVAL_MS = 60_000;
 const SHUTDOWN_CANCELLED_WARNING = "Search stopped because Fly Desk was restarted.";
-const SHUTDOWN_CANCEL_GRACE_MS = 1_000;
-const SHUTDOWN_JOB_DRAIN_MS = 4_000;
 
 /*
- * Shutdown budget. Bun's graceful `server.stop()` waits for every in-flight
- * request, and long-polls keep arriving during a sweep, so the drain gets a
- * short window before connections are closed under it. The whole shutdown has
- * a deadline below the search runner's 15 s `TimeoutStopSec`: exiting on our
- * own terms runs the cleanup (CDP tabs, SQLite) that SIGKILL would skip.
+ * Shutdown budget. Running searches get `SHUTDOWN_JOB_DRAIN_MS` to finish,
+ * with the HTTP side still serving, so a page following one sees how it ends;
+ * the rest are cancelled keeping what they found. From there the cancelled
+ * jobs unwind, the pooled workers stop (closing their tabs within 2 s), and
+ * the HTTP side stops: Bun's graceful `server.stop()` waits for every request
+ * in flight, a long poll included, so it gets `SHUTDOWN_DRAIN_MS` before
+ * connections are closed under it. The whole shutdown has a deadline below
+ * the search runner's 15 s `TimeoutStopSec`: exiting on our own terms runs the
+ * cleanup (CDP tabs, SQLite) that SIGKILL would skip.
  */
+const SHUTDOWN_JOB_DRAIN_MS = 3_000;
+const SHUTDOWN_CANCEL_GRACE_MS = 1_000;
+const SHUTDOWN_WORKER_EXIT_MS = 2_500;
 const SHUTDOWN_DRAIN_MS = 3_000;
 const SHUTDOWN_DEADLINE_MS = 8_000;
 
@@ -145,24 +150,27 @@ async function main() {
     const activeRuntime = getActiveRuntime();
     const activeSessions = startupSessions ?? getSessionStoreIfInitialized();
     activeRuntime?.searchAdmission.stopAccepting(SHUTDOWN_CANCELLED_WARNING);
-    /* Close the HTTP side while the admission leases finish, so a provider
-       that is about to answer still gets to publish its offers. */
-    const serverStop = stopServerWithinDrainWindow();
+    /* The HTTP side keeps serving while running searches finish, so a
+       provider about to answer still publishes its offers and a page
+       following the search reads them. */
     await phase("drain", async () => {
       flushPendingProgressForShutdown();
       await activeRuntime?.searchAdmission.drain(SHUTDOWN_JOB_DRAIN_MS);
     });
-    await phase("cancel", async () => {
-      const cancelled = activeSessions?.cancelRunningJobs(SHUTDOWN_CANCELLED_WARNING, { cachePartial: true })
-        ?? { searchJobs: 0, matrixJobs: 0 };
-      activeRuntime?.searchAdmission.dispose(SHUTDOWN_CANCELLED_WARNING);
+    let cancelled = { searchJobs: 0, matrixJobs: 0 };
+    await phase("cancel", () => {
+      cancelled = activeSessions?.cancelRunningJobs(SHUTDOWN_CANCELLED_WARNING, { cachePartial: true })
+        ?? cancelled;
+      /* What the cancelled jobs still had at their providers is hung up on,
+         and their units come back as that settles. */
+      abortLiveJobs();
       if (cancelled.searchJobs > 0 || cancelled.matrixJobs > 0) {
         console.warn(
           `Fly Desk shutdown cancelled active jobs: search=${cancelled.searchJobs} matrix=${cancelled.matrixJobs}`,
         );
-        await delay(SHUTDOWN_CANCEL_GRACE_MS);
       }
     });
+    /* Nothing starts from here on: a prewarm would spawn the workers anew. */
     clearInterval(maintenanceHandle);
     clearInterval(sessionMaintenanceHandle);
     if (startupCleanupTimer) {
@@ -174,7 +182,14 @@ async function main() {
     if (providerPrewarmHandle) {
       clearInterval(providerPrewarmHandle);
     }
-    stopSearchWorkerPool();
+    /* Every job has its final state, and the pages parked on one have been
+       answered: the rest ends side by side. */
+    const workersStopped = stopSearchWorkerPool();
+    const serverStop = stopServerWithinDrainWindow();
+    if (cancelled.searchJobs > 0 || cancelled.matrixJobs > 0) {
+      await phase("unwind", () => activeRuntime?.searchAdmission.drain(SHUTDOWN_CANCEL_GRACE_MS));
+    }
+    await phase("workers", () => Promise.race([workersStopped, delay(SHUTDOWN_WORKER_EXIT_MS)]));
     await phase("http", () => serverStop);
     await phase("temp cleanup", () => tempCleanupPromise?.catch(() => undefined));
     await phase("location cache", () => activeRuntime?.locationSuggestions.purgeExpired());
