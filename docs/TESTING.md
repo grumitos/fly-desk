@@ -8,6 +8,8 @@ upstream's request log, the API, the stack's SQLite files, and process ids.
 There is no unit suite. What a release is before it runs, the artifact booted
 the way the platform boots it, is the release smoke's
 (`scripts/release-smoke.ts`, described in [`DEPLOY_APP.md`](./DEPLOY_APP.md)).
+The gates a change must pass are listed once, in [`AGENTS.md`](../AGENTS.md),
+"Verification".
 
 ## Commands
 

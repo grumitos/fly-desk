@@ -21,9 +21,8 @@ where the token comes from, how to tell when it is missing, and how to recover.
   renews only `CBPLUS_TOKEN`, the file it leaves behind goes stale and is
   outlived. A search job keeps no token of its own, so a quote revalidated hours
   after its search uses the token installed last.
-- `src/provider-context.ts` accepts a token only when it is a well-formed,
-  unexpired JWT for the configured terminal; anything else is treated as
-  missing.
+- `src/provider-context.ts` treats a token as missing when it has expired or
+  names a terminal other than the configured one.
 
 ## Symptoms
 
@@ -32,15 +31,17 @@ where the token comes from, how to tell when it is missing, and how to recover.
 - Click and Book Plus purchase links answer with the blocked page instead of a
   `302`.
 
-Confirm from the host with the daily `ops` wrapper, reading status only:
+Confirm from the host with the daily `ops` wrapper, reading status only. `ops`
+reads the journal through its group membership, so the command needs no
+`sudo`:
 
 ```bash
-sudo -n journalctl -t vps-platform-fly-cbplus-token --since '2 hours ago' --no-pager
+journalctl -t vps-platform-fly-cbplus-token --since '2 hours ago' --no-pager
 ```
 
-A healthy host shows an accepted install every twenty minutes or so. Then run
-`Fly Desk Production Smoke` in `vps-platform`: it requires Click and Book Plus
-offers and a validated `/r/<id>` redirect.
+A healthy host shows accepted installs at the pace of the renewer's schedule.
+Then run `Fly Desk Production Smoke` in `vps-platform`: it requires Click and
+Book Plus offers and a validated `/r/<id>` redirect.
 
 ## Recovery
 

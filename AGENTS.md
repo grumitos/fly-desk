@@ -13,6 +13,9 @@ Guidance for agents working on Fly Desk.
 
 ## Verification
 
+This is the only list of gates; other documents point here instead of
+repeating it.
+
 For code or runtime changes:
 
 ```powershell
