@@ -217,6 +217,7 @@ const SEARCH_REVALIDATION_CACHE_WARNING = "Mostrando resultados cacheados mientr
 const SEARCH_PROGRESS_SYNC_INTERVAL_MS = 900;
 const SEARCH_CANCELLED_WARNING = "Search cancelled by user.";
 const SEARCH_REFRESH_CANCELLED_WARNING = "Search stopped because the page was refreshed.";
+const SEARCH_UNFOLLOWED_WARNING = "Search stopped because its page stopped following it.";
 const SEARCH_FAILED_UNEXPECTEDLY = "Search failed unexpectedly.";
 function readNonNegativeEnvMs(name: string, fallbackMs: number): number {
   const configured = envNumber(name, fallbackMs);
@@ -354,35 +355,102 @@ export function flushPendingProgressForShutdown(): void {
   }
 }
 
-/* The jobs this process runs, each with the signal that stops its provider
-   work or takes it out of the admission queue. */
+/*
+ * The jobs this process runs, each with the signal that stops its provider
+ * work or takes it out of the admission queue, and when somebody last
+ * followed it.
+ *
+ * A desk follows a job by long-polling it, and a poll parked on the job counts
+ * as following it for as long as it is parked. A job nobody has followed for
+ * the lease (`FLY_DESK_SEARCH_JOB_LEASE_MS`, 90 s by default) is stopped the
+ * way a closed page stops it: its results so far are kept, its provider
+ * requests are hung up on, and its capacity is released. That is what frees a
+ * search whose page went away without saying so — a laptop put to sleep, a
+ * lost network, an expired session — and a queued search nobody waits for.
+ * The lease is above the longest gap a live desk leaves between two polls: a
+ * background tab's timers may run once a minute, and a poll parks up to 20 s.
+ */
 type JobKind = "search" | "matrix";
 
-const liveJobs = new Map<string, AbortController>();
+interface LiveJob {
+  controller: AbortController;
+  followedAtMs: number;
+  parkedPolls: number;
+}
+
+const DEFAULT_SEARCH_JOB_LEASE_MS = 90_000;
+const liveJobs = new Map<string, LiveJob>();
+let leaseTimer: ReturnType<typeof setInterval> | undefined;
+
+function searchJobLeaseMs(): number {
+  return Math.trunc(envNumber("FLY_DESK_SEARCH_JOB_LEASE_MS", DEFAULT_SEARCH_JOB_LEASE_MS, { min: 1_000 }));
+}
 
 function liveJobKey(kind: JobKind, jobId: string): string {
   return `${kind}:${jobId}`;
 }
 
 function startLiveJob(kind: JobKind, jobId: string): AbortSignal {
-  const controller = new AbortController();
-  liveJobs.set(liveJobKey(kind, jobId), controller);
-  return controller.signal;
+  const job: LiveJob = { controller: new AbortController(), followedAtMs: Date.now(), parkedPolls: 0 };
+  liveJobs.set(liveJobKey(kind, jobId), job);
+  if (!leaseTimer) {
+    const leaseMs = searchJobLeaseMs();
+    leaseTimer = setInterval(() => stopUnfollowedJobs(leaseMs), Math.min(5_000, Math.max(250, Math.trunc(leaseMs / 4))));
+    leaseTimer.unref?.();
+  }
+  return job.controller.signal;
 }
 
 function endLiveJob(kind: JobKind, jobId: string): void {
   liveJobs.delete(liveJobKey(kind, jobId));
+  if (liveJobs.size === 0 && leaseTimer) {
+    clearInterval(leaseTimer);
+    leaseTimer = undefined;
+  }
 }
 
 /** Stops a job's provider work, or takes it out of the admission queue. */
 function abortLiveJob(kind: JobKind, jobId: string): void {
-  liveJobs.get(liveJobKey(kind, jobId))?.abort();
+  liveJobs.get(liveJobKey(kind, jobId))?.controller.abort();
 }
 
 /** Every job this process runs, stopped: its provider work, or its wait. */
 export function abortLiveJobs(): void {
-  for (const controller of liveJobs.values()) {
-    controller.abort();
+  for (const job of liveJobs.values()) {
+    job.controller.abort();
+  }
+}
+
+/* A long poll follows its job while it is parked, and from its answer on. A
+   plain read of the job, which a desk never makes of a job it follows, does
+   not keep it alive. */
+async function followLiveJob(kind: JobKind, jobId: string, wait: () => Promise<void>): Promise<void> {
+  const job = liveJobs.get(liveJobKey(kind, jobId));
+  if (!job) {
+    return wait();
+  }
+
+  job.parkedPolls += 1;
+  try {
+    await wait();
+  } finally {
+    job.parkedPolls -= 1;
+    job.followedAtMs = Date.now();
+  }
+}
+
+function stopUnfollowedJobs(leaseMs: number): void {
+  const nowMs = Date.now();
+  for (const [key, job] of liveJobs) {
+    if (job.parkedPolls > 0 || nowMs - job.followedAtMs <= leaseMs || job.controller.signal.aborted) {
+      continue;
+    }
+
+    const separator = key.indexOf(":");
+    const kind = key.slice(0, separator) as JobKind;
+    const jobId = key.slice(separator + 1);
+    console.warn(`Fly Desk stopped a ${kind} job nobody followed for ${nowMs - job.followedAtMs}ms: ${jobId}`);
+    stopJob(getRuntime(), kind, jobId, SEARCH_UNFOLLOWED_WARNING, true);
   }
 }
 
@@ -3230,7 +3298,7 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
     const sinceRevision = parseSinceRevision(url.searchParams.get("sinceRevision"));
     const waitMs = parseJobPollWaitMs(url.searchParams.get("wait"));
     if (waitMs > 0 && typeof sinceRevision === "number") {
-      await runtime.sessions.waitForSearchJobChange(jobId, sinceRevision, waitMs);
+      await followLiveJob("search", jobId, () => runtime.sessions.waitForSearchJobChange(jobId, sinceRevision, waitMs));
     }
 
     const job = runtime.sessions.getSearchJob(jobId);
@@ -3268,7 +3336,7 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
     const sinceRevision = parseSinceRevision(url.searchParams.get("sinceRevision"));
     const waitMs = parseJobPollWaitMs(url.searchParams.get("wait"));
     if (waitMs > 0 && typeof sinceRevision === "number") {
-      await runtime.sessions.waitForMatrixJobChange(jobId, sinceRevision, waitMs);
+      await followLiveJob("matrix", jobId, () => runtime.sessions.waitForMatrixJobChange(jobId, sinceRevision, waitMs));
     }
 
     const job = runtime.sessions.getMatrixJob(jobId);

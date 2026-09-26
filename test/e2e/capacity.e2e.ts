@@ -20,13 +20,14 @@ import {
   type SearchCapacity,
   type SearchJob,
 } from "./support/api-client.ts";
-import { startedJob, waitForResults } from "./support/flows.ts";
+import { startedJob, waitForIdleCapacity, waitForResults } from "./support/flows.ts";
 import { defineSuite } from "./support/harness.ts";
 import { fakeCbplusToken, FAKE_CBPLUS_TERMINAL_ID, type OfferSpec } from "./support/fixtures.ts";
-import type { Gate, RecordedRequest } from "./support/fake-upstream.ts";
+import type { RecordedRequest } from "./support/fake-upstream.ts";
 import {
   day,
   eventually,
+  holdProviderSearches as holdRoute,
   matchesRoute,
   maxInFlight,
   pageStats,
@@ -85,11 +86,6 @@ function callsFor(requests: readonly RecordedRequest[], route: RouteFilter): Rec
  * 1, a matrix or a range of up to ten days 2, a range of up to a month 3.
  */
 
-/** A search held at its providers: every provider request on `route` waits for `release`. */
-function holdRoute(fake: typeof suite.fake, route: RouteFilter): Gate {
-  return fake.hold("*", (request) => isProviderSearch(request) && matchesRoute(request, route));
-}
-
 /** The counts of a capacity reading, for comparing. */
 function occupancy(capacity: SearchCapacity) {
   return {
@@ -97,12 +93,6 @@ function occupancy(capacity: SearchCapacity) {
     activeSearches: capacity.activeSearches,
     queuedSearches: capacity.queuedSearches,
   };
-}
-
-async function capacityBackToIdle(api: ApiSession): Promise<void> {
-  await eventually(async () => {
-    assert.deepEqual(occupancy(await readCapacity(api)), { activeUnits: 0, activeSearches: 0, queuedSearches: 0 });
-  }, { message: "the capacity came back to idle" });
 }
 
 async function isQueued(api: ApiSession, job: SearchJob): Promise<boolean> {
@@ -147,7 +137,7 @@ suite.test("a search that does not fit waits instead of being refused, and one s
     assert.equal(finished.queued, false);
   }
   assert.equal(callsFor(fake.requests(), { origin: "LIM", destination: "CUZ", departureDate: day(116) }).length, 0, "the stopped search reached a provider");
-  await capacityBackToIdle(api);
+  await waitForIdleCapacity(api);
 });
 
 suite.test("each agent starts an exact search at once whatever runs, and the agent holding less capacity goes first", async (scope) => {
@@ -201,7 +191,7 @@ suite.test("each agent starts an exact search at once whatever runs, and the age
   for (const gate of [gateA3, gateB1, gateExactA, gateExactB]) {
     gate.release();
   }
-  await capacityBackToIdle(agentA);
+  await waitForIdleCapacity(agentA);
 });
 
 suite.test("two month-long ranges never run at once, and the waiting one is not overtaken by a shorter one", async (scope) => {
@@ -230,7 +220,7 @@ suite.test("two month-long ranges never run at once, and the waiting one is not 
   const lastOfA = Math.max(...callsFor(fake.requests(), { destination: "MIA" }).map((request) => request.respondedAt ?? Number.POSITIVE_INFINITY));
   const firstOfB = Math.min(...callsFor(fake.requests(), { destination: "MAD" }).map((request) => request.receivedAt));
   assert.ok(firstOfB >= lastOfA, "B's month reached a provider before A's month had finished");
-  await capacityBackToIdle(agentA);
+  await waitForIdleCapacity(agentA);
 });
 
 /* The unit's cgroup as the runner reads it (`src/unit-memory.ts`), written by
@@ -270,12 +260,12 @@ suite.test("beside other heavy work a heavy search waits while the unit's memory
     /* Alone, a heavy search starts whatever the memory says. */
     gateA.release();
     gateB.release();
-    await capacityBackToIdle(agentA);
+    await waitForIdleCapacity(agentA);
     cgroup.holding(850);
     const lone = await startSearch(agentA, searchPayloads.range("LIM", "CUZ", day(225), day(226)));
     assert.equal(lone.queued, false, "a heavy search alone waited for memory");
     assert.equal((await followSearchJob(agentA, lone)).job.searchStatus, "completed");
-    await capacityBackToIdle(agentA);
+    await waitForIdleCapacity(agentA);
   } finally {
     await stack.restart("runner", { env: { FLY_DESK_CGROUP_DIR: undefined } });
     rmSync(cgroup.dir, { recursive: true, force: true });

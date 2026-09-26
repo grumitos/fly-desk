@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import type { Page, Response as PlaywrightResponse } from "playwright";
-import type { MatrixJob, SearchJob } from "./api-client.ts";
+import { readCapacity, type ApiSession, type MatrixJob, type SearchJob } from "./api-client.ts";
 import { eventually } from "./scenario.ts";
 import { readCards, readResultCount, results, searchForm, type CardReading } from "./ui.ts";
 
@@ -8,6 +8,17 @@ import { readCards, readResultCount, results, searchForm, type CardReading } fro
  * Gestures and waits the specs share. Selectors stay in `ui.ts`; this file only
  * strings them into the few sequences every spec repeats.
  */
+
+/** Waits until the runner's shared capacity is idle: nothing running, nothing waiting. */
+export async function waitForIdleCapacity(api: ApiSession, timeoutMs = 15_000): Promise<void> {
+  await eventually(async () => {
+    const capacity = await readCapacity(api);
+    assert.deepEqual(
+      { activeUnits: capacity.activeUnits, activeSearches: capacity.activeSearches, queuedSearches: capacity.queuedSearches },
+      { activeUnits: 0, activeSearches: 0, queuedSearches: 0 },
+    );
+  }, { timeoutMs, message: "the capacity came back to idle" });
+}
 
 /** The job the page's own `POST /api/search` (or `/api/matrix`) created. */
 export async function startedJob<T extends SearchJob | MatrixJob = SearchJob>(
