@@ -1,7 +1,8 @@
 /*
  * Shared by the Bun preload (inside every process of the stack) and by the
- * Node-side fake upstream: the provider origins the stack may reach, each with
- * the path prefix the fake serves it under. An origin missing here is blocked.
+ * fake upstream in the test process: the provider origins the stack may reach,
+ * each with the path prefix the fake serves it under. An origin missing here
+ * is blocked.
  */
 export const FAKE_UPSTREAM_ENV = "FLY_DESK_E2E_FAKE_UPSTREAM";
 export const CALLER_HEADER = "x-fly-desk-e2e-caller";

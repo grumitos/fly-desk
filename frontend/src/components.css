@@ -2036,12 +2036,17 @@
     background: var(--color-surface-sunken);
   }
 
+  /* The panel is 620 wide wherever it opens, and beside the actions one line
+     does not hold the sentence: it takes two, the buttons' own height, each
+     phrase whole, so the line breaks after the «·». */
   .fd-quote-age {
     min-width: 0;
-    overflow: hidden;
     color: var(--color-muted-foreground);
     font-size: var(--fd-text-meta);
-    text-overflow: ellipsis;
+    line-height: 1.3;
+  }
+
+  .fd-quote-age-phrase {
     white-space: nowrap;
   }
 
@@ -2226,6 +2231,23 @@
       width: 20px;
       overflow: hidden;
       padding-inline: 4px;
+    }
+  }
+
+  /* Narrower, not even the spinner fits: the longest month («Noviembre de
+     2026», 125px), «Más bajo» and the spinner need 223 with their gaps, 228
+     with room for another renderer's text. There the loading badge after «Más
+     bajo» gives way, its word still for screen readers, and the month and «Más
+     bajo» stay whole down to the narrowest desk head (198). */
+  @container fd-month-head (max-width: 227.98px) {
+    .fd-month-badge:not(.fd-month-badge--quiet) + .fd-month-badge--quiet {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      padding: 0;
+      clip-path: inset(50%);
+      white-space: nowrap;
     }
   }
 

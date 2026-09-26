@@ -10,12 +10,14 @@ import { day, eventually, providerSearches } from "./support/scenario.ts";
 import {
   announcement,
   detail,
+  isUnclipped,
   notice,
   pastedQuotation,
   quotation,
   results,
   searchForm,
   searchLink,
+  showsWholeText,
   topBar,
 } from "./support/ui.ts";
 
@@ -132,6 +134,8 @@ suite.test("a domestic quote is priced in soles and ages while open, pasting it 
   assert.match(quoted, /S\/\s*[\d.,]+ por adulto/, "a domestic quote is not in soles");
   const fareAge = quotation.fareAge(page);
   assert.match(await fareAge.innerText(), /^Tarifa preparada hace menos de 1 min/);
+  /* The panel is as wide at every desk width: the rule reads whole beside the actions. */
+  assert.ok(await showsWholeText(fareAge) && await isUnclipped(fareAge), "the fare's age and its rule are cut off");
   await page.clock.runFor(125_000);
   await eventually(async () => assert.match(await fareAge.innerText(), /^Tarifa preparada hace 2 min/), { timeoutMs: 3_000, message: "the fare's age stood still" });
   await quotation.close(page).click();

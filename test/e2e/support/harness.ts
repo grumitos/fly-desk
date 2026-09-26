@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { after, before, test, type TestContext } from "node:test";
+import { afterAll, beforeAll, test } from "bun:test";
 import {
   chromium,
   type Browser,
@@ -18,15 +18,17 @@ import { startStack, type LogMark, type Stack, type StackOptions } from "./stack
 
 /*
  * One spec file = one fake upstream, one stack and one browser, started in
- * `before` and stopped in `after`. Every test gets fresh browser contexts, a
- * reset fake, and — when it fails — screenshots, what every unit of the stack
- * wrote while it ran and the fake's request log under
+ * `beforeAll` and stopped in `afterAll`. Every test gets fresh browser
+ * contexts, a reset fake, and — when it fails — screenshots, what every unit
+ * of the stack wrote while it ran and the fake's request log under
  * `test-results/e2e/<spec>/<test>/`.
  */
 
 const REPO_ROOT = resolve(import.meta.dirname, "..", "..", "..");
 export const RESULTS_ROOT = join(REPO_ROOT, "test-results", "e2e");
 const DEFAULT_TEST_TIMEOUT_MS = 180_000;
+/* Starting and stopping a file's stack and browser; `bun test` would allow five seconds. */
+const SUITE_HOOK_TIMEOUT_MS = 180_000;
 
 export interface SuiteOptions {
   /** `import.meta.filename` of the spec: names its artifact folder. */
@@ -322,12 +324,15 @@ export class Suite {
     this.specName = basename(options.file).replace(/\.e2e\.ts$/, "");
   }
 
-  test(name: string, run: (scope: TestScope, t: TestContext) => Promise<void>, options: TestOptions = {}): void {
-    test(name, { timeout: options.timeout ?? DEFAULT_TEST_TIMEOUT_MS, todo: options.todo, skip: options.skip }, async (t) => {
+  test(name: string, run: (scope: TestScope) => Promise<void>, options: TestOptions = {}): void {
+    /* The runner passes `--todo`: a todo test runs, its failure counts as a
+       known gap, and its pass fails the file until the mark comes off. */
+    const register = options.skip ? test.skip : options.todo ? test.todo : test;
+    register(name, async () => {
       this.fake.reset();
       const scope = new TestScope(this, name, this.stack?.mark(`test: ${name}`));
       try {
-        await run(scope, t);
+        await run(scope);
         this.assertInvariants(scope, options);
       } catch (error) {
         await scope.captureFailure(error);
@@ -335,7 +340,7 @@ export class Suite {
       } finally {
         await scope.close();
       }
-    });
+    }, { timeout: options.timeout ?? DEFAULT_TEST_TIMEOUT_MS });
   }
 
   /* Holds for every test: nothing left the machine, no fallback path ran, no
@@ -369,18 +374,18 @@ export class Suite {
 export function defineSuite(options: SuiteOptions): Suite {
   const suite = new Suite(options);
 
-  before(async () => {
+  beforeAll(async () => {
     suite.fake = await startFakeUpstream();
     suite.stack = await startStack({ today: TODAY, ...options.stack, fakeUpstreamUrl: suite.fake.url });
     const channel = process.env.FLY_DESK_TEST_BROWSER_CHANNEL?.trim() || undefined;
     suite.browser = await chromium.launch({ channel, headless: true, args: BROWSER_ARGS });
-  });
+  }, SUITE_HOOK_TIMEOUT_MS);
 
-  after(async () => {
+  afterAll(async () => {
     await suite.browser?.close().catch(() => undefined);
     await suite.stack?.stop();
     await suite.fake?.close();
-  });
+  }, SUITE_HOOK_TIMEOUT_MS);
 
   return suite;
 }

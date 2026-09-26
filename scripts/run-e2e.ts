@@ -1,15 +1,15 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { basename, join, resolve } from "node:path";
 
 /*
  * Runs the end-to-end suite: every `test/e2e/*.e2e.ts` file in its own
- * `node --test` process, several at once. Each file starts its own fake
+ * `bun test` process, several at once. Each file starts its own fake
  * upstream, service stack and browser, so files share nothing but the
  * machine; the tests inside a file run one after another.
  *
- *   bun scripts/run-e2e.ts [spec files…] [-- node --test options…]
+ *   bun scripts/run-e2e.ts [spec files…] [-- bun test options…]
  *
  * FLY_DESK_E2E_CONCURRENCY sets how many files run at once (default: one less
  * than the cores, at most three). FLY_DESK_TEST_BROWSER_CHANNEL picks the
@@ -21,9 +21,6 @@ import { basename, join, resolve } from "node:path";
 const rootDir = resolve(import.meta.dirname, "..");
 const specDir = join(rootDir, "test", "e2e");
 const resultsDir = join(rootDir, "test-results", "e2e");
-/* The harness gives each test three minutes; this only catches a test that
-   never reaches its own timeout. */
-const TEST_TIMEOUT_MS = 300_000;
 
 const argv = process.argv.slice(2);
 const separator = argv.indexOf("--");
@@ -53,23 +50,7 @@ function resolveConcurrency(): number {
   return Math.max(1, Math.min(3, availableParallelism() - 1, specFiles.length));
 }
 
-/* Node strips TypeScript types on its own from 22.18; before that it needs the flag. */
-function nodeTypeFlags(): string[] {
-  const version = spawnSync("node", ["--version"], { encoding: "utf8" }).stdout.trim();
-  const match = /^v(\d+)\.(\d+)/.exec(version);
-  if (!match) {
-    throw new Error(`Cannot read the Node version (${version || "node not found"}).`);
-  }
-  const [major, minor] = [Number(match[1]), Number(match[2])];
-  if (major < 22 || (major === 22 && minor < 6)) {
-    throw new Error(`The end-to-end suite needs Node 22.6 or later; found ${version}.`);
-  }
-  return major === 22 && minor < 18
-    ? ["--experimental-strip-types", "--disable-warning=ExperimentalWarning"]
-    : [];
-}
-
-/* The stack spawns Bun; when this runner is Bun itself, that is the one to use. */
+/* The same Bun runs each file and the stack each file starts. */
 const bunExecutable = process.env.BUN_EXECUTABLE_PATH?.trim()
   || (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined" ? process.execPath : "bun");
 
@@ -77,29 +58,35 @@ interface FileResult {
   file: string;
   exitCode: number;
   wallMs: number;
-  counts: Record<"tests" | "pass" | "fail" | "todo" | "cancelled" | "skipped", number>;
+  counts: Record<"tests" | "pass" | "fail" | "todo" | "skip" | "error", number>;
 }
 
+/* The totals `bun test` prints last: " 3 pass", " 1 todo", "Ran 4 tests across 1 file." */
 function readCounts(output: string): FileResult["counts"] {
-  const count = (label: string) => Number(new RegExp(`^ℹ ${label} (\\d+)$`, "m").exec(output)?.[1] ?? 0);
+  const last = (pattern: RegExp) => Number([...output.matchAll(pattern)].at(-1)?.[1] ?? 0);
+  const count = (label: string) => last(new RegExp(`^ *(\\d+) ${label}s?$`, "gm"));
   return {
-    tests: count("tests"),
+    tests: last(/^Ran (\d+) tests? across/gm),
     pass: count("pass"),
     fail: count("fail"),
     todo: count("todo"),
-    cancelled: count("cancelled"),
-    skipped: count("skipped"),
+    skip: count("skip"),
+    error: count("error"),
   };
 }
 
-function runFile(file: string, typeFlags: string[]): Promise<FileResult> {
+function runFile(file: string): Promise<FileResult> {
   const startedAt = Date.now();
   return new Promise((resolveRun) => {
-    const child = spawn("node", [
-      ...typeFlags,
-      "--test",
-      "--test-reporter=spec",
-      `--test-timeout=${TEST_TIMEOUT_MS}`,
+    const child = spawn(bunExecutable, [
+      "test",
+      /* A test marked todo runs: its failure counts as a known gap, and its
+         pass fails the file until the mark comes off. */
+      "--todo",
+      /* A name pattern that matches nothing in this file leaves it nothing to run. */
+      "--pass-with-no-tests",
+      /* The file's stack and browser go with it if this runner dies. */
+      "--no-orphans",
       ...passthrough,
       file,
     ], {
@@ -130,7 +117,6 @@ function runFile(file: string, typeFlags: string[]): Promise<FileResult> {
 
 async function main(): Promise<void> {
   rmSync(resultsDir, { recursive: true, force: true });
-  const typeFlags = nodeTypeFlags();
   const concurrency = resolveConcurrency();
   const startedAt = Date.now();
   process.stdout.write(`Running ${specFiles.length} end-to-end files, ${concurrency} at a time.\n`);
@@ -139,7 +125,7 @@ async function main(): Promise<void> {
   const results: FileResult[] = [];
   await Promise.all(Array.from({ length: concurrency }, async () => {
     for (let file = queue.shift(); file; file = queue.shift()) {
-      results.push(await runFile(file, typeFlags));
+      results.push(await runFile(file));
     }
   }));
 
@@ -148,11 +134,12 @@ async function main(): Promise<void> {
   const width = Math.max(...rows.map((row) => basename(row.file).length));
   process.stdout.write("\nEnd-to-end summary\n");
   for (const row of rows) {
-    const { tests, pass, fail, todo, cancelled } = row.counts;
+    const { tests, pass, fail, todo, skip, error } = row.counts;
     process.stdout.write(
       `  ${basename(row.file).padEnd(width)}  ${(row.wallMs / 1000).toFixed(1).padStart(6)} s  `
       + `${pass}/${tests} passed${todo ? `, ${todo} known gap${todo === 1 ? "" : "s"}` : ""}`
-      + `${fail ? `, ${fail} FAILED` : ""}${cancelled ? `, ${cancelled} cancelled` : ""}${row.exitCode !== 0 ? `  (exit ${row.exitCode})` : ""}\n`,
+      + `${skip ? `, ${skip} skipped` : ""}${fail ? `, ${fail} FAILED` : ""}`
+      + `${error ? `, ${error} error${error === 1 ? "" : "s"}` : ""}${row.exitCode !== 0 ? `  (exit ${row.exitCode})` : ""}\n`,
     );
   }
   process.stdout.write(`  ${"total wall time".padEnd(width)}  ${(totalMs / 1000).toFixed(1).padStart(6)} s\n`);

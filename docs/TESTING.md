@@ -15,15 +15,13 @@ The gates a change must pass are listed once, in [`AGENTS.md`](../AGENTS.md),
 
 - `bun run test` (or `bun run test:e2e`): `bun run build`, then
   `scripts/run-e2e.ts`.
-- `bun scripts/run-e2e.ts [spec files…] [-- node --test options…]`: runs the
+- `bun scripts/run-e2e.ts [spec files…] [-- bun test options…]`: runs the
   suite, or some of its files, on an existing build. For example:
   `bun scripts/run-e2e.ts test/e2e/capacity.e2e.ts -- --test-name-pattern="queue"`.
 - `bun run typecheck` also checks `test/**/*.ts`, `scripts/run-e2e.ts` and
   `scripts/release-smoke.ts` through `tsconfig.test.json`.
 
-The suite needs Bun 1.4, Node 22.6 or later, and a Chromium for Playwright.
-Node strips TypeScript types on its own from 22.18; before that, the runner
-passes `--experimental-strip-types`. CI uses Node 26.
+The suite needs Bun 1.4 and a Chromium for Playwright.
 
 | Variable | Effect |
 | --- | --- |
@@ -33,11 +31,11 @@ passes `--experimental-strip-types`. CI uses Node 26.
 ## How the suite runs
 
 `scripts/run-e2e.ts` runs every `test/e2e/*.e2e.ts` file in its own
-`node --test` process, several files at once, and prints each file's report
+`bun test` process, several files at once, and prints each file's report
 whole, followed by a summary with the wall time of every file. A spec file
-starts one fake upstream, one stack and one browser in `before` and stops them
-in `after`. Its tests run one after another, each with fresh browser contexts
-and a reset fake. A test has three minutes. The harness lives in
+starts one fake upstream, one stack and one browser in `beforeAll` and stops
+them in `afterAll`. Its tests run one after another, each with fresh browser
+contexts and a reset fake. A test has three minutes. The harness lives in
 `test/e2e/support/`:
 
 - `support/stack.ts`: the topology of the `fly-desk*.service` units on

@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "bun ./index.html",
-    "build": "node ../node_modules/@typescript/native/bin/tsc -b && bun ../scripts/build-frontend.ts",
-    "typecheck": "node ../node_modules/@typescript/native/bin/tsc -b",
-    "lint": "eslint ."
+    "build": "bun ../node_modules/@typescript/native/bin/tsc -b && bun ../scripts/build-frontend.ts",
+    "typecheck": "bun ../node_modules/@typescript/native/bin/tsc -b",
+    "lint": "bun --bun eslint ."
   },
   "dependencies": {
     "@radix-ui/react-popover": "^1.1.20",

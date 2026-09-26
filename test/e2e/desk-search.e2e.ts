@@ -386,7 +386,13 @@ suite.test("a flexible round trip fills in cell by cell, keeps the cards it drew
   await results.card(page, /USD 598\.00 total/).click();
   const panel = detail.surface(page);
   await eventually(async () => assert.match(await panel.innerText(), /Click and Book Plus/));
+  /* While the provider confirms it, «Cotizar» is busy and says what for. */
+  const confirming = fake.hold("cbplus.search");
   await detail.quote(panel).click();
+  await eventually(() => assert.ok(confirming.seen > 0, "the quote never reached the provider"));
+  assert.equal(await detail.quote(panel).getAttribute("aria-busy"), "true");
+  await announcement.status(page, "Validando la tarifa con el proveedor").waitFor();
+  confirming.release();
   const quoteDialog = quotation.dialog(page);
   await quoteDialog.waitFor();
   assert.match(await quoteDialog.innerText(), /US\$\s*603\.50 por adulto/);
@@ -400,6 +406,8 @@ suite.test("a flexible round trip fills in cell by cell, keeps the cards it drew
   assert.equal(validatedCell?.price?.amount, 603.5);
   await quotation.close(page).click();
   await quoteDialog.waitFor({ state: "hidden" });
+  assert.equal(await detail.quote(panel).getAttribute("aria-busy"), null, "«Cotizar» is still busy after its quote");
+  assert.equal(await announcement.status(page, "Validando la tarifa con el proveedor").count(), 0);
 
   /* Within fifteen minutes the confirmed fare is reused, not asked for again. */
   assert.ok(validatedCell?.offer?.quotationPreparedAt, "the matrix keeps the quoted offer unprepared for quoting");

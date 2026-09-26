@@ -242,8 +242,8 @@ export const detail = {
 export const quotation = {
   dialog: (page: Page) => page.getByRole("dialog", { name: "Cotización lista para pegar" }),
   close: (page: Page) => page.getByRole("button", { name: "Cerrar la cotización" }),
-  /** «Tarifa preparada hace 2 min · …», at the dialog's foot. */
-  fareAge: (page: Page) => quotation.dialog(page).getByText(/^Tarifa preparada /),
+  /** «Tarifa preparada hace 2 min · vuelve a cotizar si pasa de 15 min», at the dialog's foot. */
+  fareAge: (page: Page) => quotation.dialog(page).getByText(/^Tarifa preparada .+ · vuelve a cotizar /),
 };
 
 /* ---- A pasted commercial quotation ---- */
@@ -262,6 +262,12 @@ export const migration = {
   monthCard: (page: Page, label: string) => page.getByTestId("migration-month-card").filter({ hasText: label }),
   monthCards: (page: Page) => page.getByTestId("migration-month-card"),
   openMonth: (page: Page, label: string) => page.getByTitle(`Abrir ${label} en una pestaña nueva`),
+  /** The name a month's card is titled with: «Noviembre de 2026». */
+  monthName: (page: Page, label: string) => migration.monthCard(page, label).getByText(label, { exact: true }),
+  /** «Más bajo» on a month's card. */
+  lowest: (page: Page, label: string) => migration.monthCard(page, label).getByText("Más bajo", { exact: true }),
+  /** «Actualizando»: a priced month still being searched. */
+  updating: (page: Page, label: string) => migration.monthCard(page, label).getByText("Actualizando", { exact: true }),
 };
 
 /* ---- Reading a result row ---- */
