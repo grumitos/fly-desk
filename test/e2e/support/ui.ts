@@ -1,0 +1,525 @@
+import type { Locator, Page } from "playwright";
+import { spanishDayName, spanishMonthName } from "./scenario.ts";
+
+/*
+ * Every selector the end-to-end suite uses, and nothing else. Roles and
+ * accessible names first; visible text where the product has no name for a
+ * thing; a `data-testid` only where there is neither. No CSS classes and no
+ * coordinates: when the frontend changes shape, this is the one file to adapt.
+ */
+
+type Root = Page | Locator;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/* ---- Shareable links (`frontend/src/lib/search-share.ts`) ---- */
+
+export interface SearchLink {
+  mode: "exact" | "flexible" | "migration";
+  trip: "round-trip" | "one-way";
+  origin: string;
+  destination: string;
+  departure?: string;
+  return?: string;
+  departureStart?: string;
+  departureEnd?: string;
+  stayNights?: number;
+  flexible?: "exact-stay";
+  months?: string[];
+  adults?: number;
+  children?: number;
+  infants?: number;
+  sort?: string;
+}
+
+/** The address a search writes onto the bar; opening an exact one runs it. */
+export function searchLink(link: SearchLink): string {
+  const params = new URLSearchParams();
+  const set = (key: string, value: string | number | undefined) => {
+    if (value !== undefined && value !== "") params.set(key, String(value));
+  };
+  set("mode", link.mode);
+  set("trip", link.trip);
+  set("origin", link.origin);
+  set("destination", link.destination);
+  set("departure", link.departure);
+  set("return", link.return);
+  set("departureStart", link.departureStart);
+  set("departureEnd", link.departureEnd);
+  set("stayNights", link.stayNights);
+  set("flexible", link.flexible);
+  set("adults", link.adults ?? 1);
+  set("children", link.children);
+  set("infants", link.infants);
+  set("sort", link.sort);
+  if (link.months?.length) set("months", link.months.join(","));
+  return `/?${params.toString()}`;
+}
+
+/* ---- The sign-in gate (`renderLoginPage` in src/web-auth.ts) ---- */
+
+export const login = {
+  password: (page: Page) => page.getByLabel("Contraseña"),
+  submit: (page: Page) => page.getByRole("button", { name: "Entrar" }),
+  /** The announced error, whatever its words. */
+  error: (page: Page) => page.getByRole("alert"),
+  themeToggle: (page: Page) => page.getByRole("button", { name: "Cambiar tema" }),
+};
+
+export async function signInThroughGate(page: Page, password: string): Promise<void> {
+  await login.password(page).fill(password);
+  await login.submit(page).click();
+}
+
+/* ---- The title bar ---- */
+
+export const topBar = {
+  themeToggle: (page: Page) => page.getByRole("banner").getByRole("button", { name: "Cambiar tema" }),
+  copyConfig: (page: Page) => page.getByRole("banner").getByRole("button", { name: "Copiar configuración" }),
+  pasteConfig: (page: Page) => page.getByRole("button", { name: "Pegar configuración" }),
+  /** The shared search capacity: a meter named in Spanish that shows the cupos in use, «4/7». */
+  capacity: (page: Page) => page.getByRole("meter", { name: "Capacidad de búsqueda" }),
+};
+
+export async function isDarkTheme(page: Page): Promise<boolean> {
+  return page.evaluate(() => document.documentElement.classList.contains("dark"));
+}
+
+/* ---- The search form ---- */
+
+export type ModeLabel = "Exacto" | "Flexible" | "Migratorio";
+export type TripLabel = "Ida y vuelta" | "Solo ida";
+export type LocationField = "Origen" | "Destino";
+
+export const searchForm = {
+  mode: (page: Page, mode: ModeLabel) =>
+    page.getByRole("radiogroup", { name: "Modo de búsqueda" }).getByRole("radio", { name: mode, exact: true }),
+  trip: (page: Page, trip: TripLabel) =>
+    page.getByRole("radiogroup", { name: "Tipo de viaje" }).getByRole("radio", { name: trip, exact: true }),
+  location: (page: Page, field: LocationField) => page.getByRole("combobox", { name: field, exact: true }),
+  /** The phone's full-screen suggestions sheet and its own search box. */
+  locationSheet: (page: Page, field: LocationField) => page.getByRole("dialog", { name: field, exact: true }),
+  locationSheetInput: (page: Page, field: LocationField) =>
+    page.getByRole("combobox", { name: `${field}: buscar ciudad o IATA` }),
+  /** A match in the suggestions, named «LIM Lima Lima, Perú». */
+  suggestion: (page: Page, code: string) => page.getByRole("option", { name: new RegExp(`^${escapeRegExp(code)}\\b`) }),
+  suggestions: (page: Page) => page.getByRole("option"),
+  /** The keys at the foot of the desk's matches: «elegir», «navegar», «esc cerrar». */
+  suggestionKeys: (page: Page) => page.getByText(/^(elegir|navegar|esc\s*cerrar)$/),
+  /** The «Recientes» / «Frecuentes» sections of the usage panel. */
+  usageSection: (page: Page, heading: "Recientes" | "Frecuentes") => page.getByRole("region", { name: heading, exact: true }),
+  departureHalf: (page: Page) => page.getByRole("button", { name: /^Salida( desde)?:/ }),
+  returnHalf: (page: Page) => page.getByRole("button", { name: /^(Regreso|Salida hasta):/ }),
+  calendarDay: (root: Root, isoDate: string) =>
+    root.getByRole("button", { name: new RegExp(`^${escapeRegExp(spanishDayName(isoDate))}(,|$)`) }),
+  /** The day or month the calendar marks as the desk's today: «20 de noviembre de 2026, hoy». */
+  calendarToday: (root: Root) => root.getByRole("button", { name: /, hoy$/ }),
+  /** The cross on the return half, which empties both dates. */
+  clearDates: (page: Page) => page.getByRole("button", { name: "Borrar las fechas" }),
+  calendarSheet: (page: Page) => page.getByRole("dialog", { name: "Fechas", exact: true }),
+  /** The desk's calendar, a popover under the date field. */
+  calendarPopover: (page: Page) => page.getByRole("dialog", { name: "Calendario de fechas", exact: true }),
+  /** A field's validation message, by its words. */
+  fieldMessage: (page: Page, text: string) => page.getByText(text, { exact: true }),
+  months: (page: Page) => page.getByRole("button", { name: /^Meses:/ }),
+  /** The desk's month popover («Selector de meses»); the phone's is the sheet «Meses». */
+  monthPicker: (page: Page) =>
+    page.getByRole("dialog", { name: "Selector de meses", exact: true }).or(page.getByRole("dialog", { name: "Meses", exact: true })),
+  /** A month of the picker, named «noviembre de 2026» plus its state. */
+  monthCell: (root: Root, month: string) =>
+    root.getByRole("button", { name: new RegExp(`^${escapeRegExp(spanishMonthName(month))}(,|$)`) }),
+  passengers: (page: Page) => page.getByRole("button", { name: "Seleccionar pasajeros" }),
+  passengerSheet: (page: Page) => page.getByRole("dialog", { name: "Pasajeros", exact: true }),
+  addPassenger: (root: Root, kind: "adultos" | "niños" | "bebés") => root.getByRole("button", { name: `Agregar ${kind}` }),
+  /** «Aplicar» at the foot of a phone sheet. */
+  applySheet: (sheet: Locator) => sheet.getByRole("button", { name: "Aplicar" }),
+  /** The cross in a phone sheet's header, «Cerrar meses» for the sheet «Meses». */
+  closeSheet: (sheet: Locator, title: string) => sheet.getByRole("button", { name: `Cerrar ${title.toLocaleLowerCase("es-PE")}`, exact: true }),
+  submit: (page: Page) => page.locator("form").getByRole("button", { name: "Buscar", exact: true }),
+  stop: (page: Page) => page.getByRole("button", { name: "Detener búsqueda" }),
+  /** The phone's one-line summary of a search, which reopens the form. */
+  editSummary: (page: Page) => page.getByRole("button", { name: "Editar búsqueda" }),
+};
+
+/* ---- The notice line above the results ---- */
+
+/* A warning is read out politely, from a `status` region; an error at once,
+   from an `alert` one. */
+function noticeIn(page: Page, region: Locator): Locator {
+  return region.filter({ has: page.getByRole("button", { name: "Descartar el aviso", exact: true }) });
+}
+
+export const notice = {
+  /** The line, whatever its tone. */
+  line: (page: Page) => noticeIn(page, page.getByRole("status").or(page.getByRole("alert"))),
+  /** The line when it is an error. */
+  error: (page: Page) => noticeIn(page, page.getByRole("alert")),
+  dismiss: (page: Page) => page.getByRole("button", { name: "Descartar el aviso", exact: true }),
+};
+
+/* ---- What the polite live regions read out without being asked ---- */
+
+export const announcement = {
+  /** An announcement by its whole text: «6 vuelos», «2 vuelos de 6», «Configuración copiada». */
+  status: (page: Page, text: string) => page.getByRole("status").filter({ hasText: new RegExp(`^${escapeRegExp(text)}$`) }),
+};
+
+/* ---- Results ---- */
+
+export type SortCriterion = "precio" | "duración" | "hora de salida" | "número de escalas";
+
+export const results = {
+  heading: (page: Page) => page.getByRole("heading", { name: /^(Resultados|Vuelo migratorio)$/, level: 2 }),
+  /**
+   * The heading's line: title, count, «N ocultos por filtros», state pill. A
+   * phone hides the title and keeps the rest, so the line is found through
+   * the title even when it is not drawn.
+   */
+  headerLine: (page: Page) =>
+    page.getByRole("heading", { name: /^(Resultados|Vuelo migratorio)$/, level: 2, includeHidden: true }).locator(".."),
+  sort: (page: Page, criterion: SortCriterion) =>
+    page.getByRole("radiogroup", { name: "Orden de resultados" }).getByRole("radio", { name: `Ordenar por ${criterion}` }),
+  /** The column head's four orders, in the order it draws them. */
+  sorts: (page: Page) => page.getByRole("radiogroup", { name: "Orden de resultados" }).getByRole("radio"),
+  /** A result row is one button whose name reads the whole fare. */
+  cards: (page: Page) => page.getByRole("button", { name: /^(Seleccionar oferta|Oferta seleccionada)\./ }),
+  selectedCard: (page: Page) => page.getByRole("button", { name: /^Oferta seleccionada\./ }),
+  /** The row whose name also matches `pattern` (airline, times, price, provider…). */
+  card: (page: Page, pattern: RegExp) =>
+    page.getByRole("button", { name: new RegExp(`^(?:Seleccionar oferta|Oferta seleccionada)\\..*${pattern.source}`) }),
+  partialPill: (page: Page) => results.headerLine(page).getByText("Parcial", { exact: true }),
+  stoppedPill: (page: Page) => results.headerLine(page).getByText("Detenida", { exact: true }),
+  emptyTitle: (page: Page, title: string) => page.getByRole("heading", { name: title, level: 3 }),
+  /** The way out of an empty or failed list: back to the form. */
+  editSearchFromEmpty: (page: Page) => page.getByRole("button", { name: "Volver a editar la búsqueda" }),
+  /** The scroller the list grows inside. */
+  viewport: (page: Page) => page.getByTestId("results-list-body"),
+  openFilters: (page: Page) => page.getByRole("button", { name: "Abrir filtros" }).first(),
+};
+
+/* ---- Filters: the desk column, or the phone's «Filtros» sheet ---- */
+
+export type StopsLabel = "Todos" | "Directo" | "1" | "2+";
+
+export const filters = {
+  sheet: (page: Page) => page.getByRole("dialog", { name: "Filtros", exact: true }),
+  /** The phone's chip for an active filter, and its way out. */
+  removeChip: (page: Page, label: string) => page.getByRole("button", { name: `Quitar filtro ${label}` }),
+  stops: (root: Root, value: StopsLabel) =>
+    root.getByRole("radiogroup", { name: "Escalas", exact: true }).getByRole("radio", { name: value, exact: true }),
+  airline: (root: Root, name: string) => root.getByRole("checkbox", { name, exact: true }),
+  clear: (root: Root) => root.getByRole("button", { name: "Limpiar filtros" }),
+  /** The sheet's primary, «Ver N vuelos». */
+  showFlights: (sheet: Locator) => sheet.getByRole("button", { name: /^Ver [\d.,]+ vuelos?$/ }),
+};
+
+/* ---- The offer: the desk's third column, or a sheet named «Oferta» ---- */
+
+export const detail = {
+  /* The sheet when there is one (it holds the same panel, hence `first`: an
+     ancestor comes before what it contains), the desk's column otherwise. */
+  surface: (page: Page) =>
+    page.getByRole("dialog", { name: "Oferta", exact: true })
+      .or(page.locator("section").filter({ has: page.getByRole("heading", { name: "Oferta", level: 2 }) }).filter({
+        has: page.getByRole("button", { name: /^(Cotizar|Copiado)$/ }),
+      }))
+      .first(),
+  quote: (root: Locator) => root.getByRole("button", { name: /^(Cotizar|Copiado)$/ }),
+  /** The desk's offer column before an offer is chosen. */
+  nothingSelected: (page: Page) => page.getByText("Selecciona una oferta para ver su detalle.", { exact: true }),
+  /** The provider's own search, through `/r/<id>`. */
+  purchase: (root: Locator) => root.getByRole("button", { name: /^(Buscar|Abrir)$/ }),
+  close: (root: Locator) => root.getByRole("button", { name: "Cerrar oferta" }),
+  /** The itinerary's leg eyebrow, «Ida» or «Vuelta». */
+  legTitle: (root: Locator, leg: "Ida" | "Vuelta") => root.getByText(leg, { exact: true }),
+  /** One flight of the itinerary rail, «3h 40m · LATAM 2400». */
+  flightRow: (root: Locator, flight: string) => root.getByText(new RegExp(`· ${escapeRegExp(flight)}$`)),
+  /** The phone's «Cotización copiada» line. */
+  copied: (root: Locator) => root.getByRole("status").filter({ hasText: "Cotización copiada" }),
+  /** What the panel says about the provider's window it was asked to open. */
+  purchaseFeedback: (root: Locator) => root.getByRole("status").filter({ hasNotText: "Cotización copiada" }),
+  quoteError: (root: Locator) => root.getByRole("alert"),
+};
+
+export const quotation = {
+  dialog: (page: Page) => page.getByRole("dialog", { name: "Cotización lista para pegar" }),
+  close: (page: Page) => page.getByRole("button", { name: "Cerrar la cotización" }),
+  /** «Tarifa preparada hace 2 min · vuelve a cotizar si pasa de 15 min», at the dialog's foot. */
+  fareAge: (page: Page) => quotation.dialog(page).getByText(/^Tarifa preparada .+ · vuelve a cotizar /),
+};
+
+/* ---- A pasted commercial quotation ---- */
+
+export const pastedQuotation = {
+  dialog: (page: Page) => page.getByRole("dialog", { name: "Cotización pegada" }),
+  search: (page: Page) => page.getByRole("button", { name: "Buscar con estos datos" }),
+};
+
+/* ---- The migratory sweep ---- */
+
+export const migration = {
+  /** A month that came back with a fare: «Noviembre de 2026: USD 700.00 con LATAM». */
+  pricedMonth: (page: Page, label: string) => page.getByRole("button", { name: new RegExp(`^${escapeRegExp(label)}: `) }),
+  /** A month's card, fare or not. The grid gives cards no role, hence the test id. */
+  monthCard: (page: Page, label: string) => page.getByTestId("migration-month-card").filter({ hasText: label }),
+  monthCards: (page: Page) => page.getByTestId("migration-month-card"),
+  openMonth: (page: Page, label: string) => page.getByTitle(`Abrir ${label} en una pestaña nueva`),
+  /** The name a month's card is titled with: «Noviembre de 2026». */
+  monthName: (page: Page, label: string) => migration.monthCard(page, label).getByText(label, { exact: true }),
+  /** «Más bajo» on a month's card. */
+  lowest: (page: Page, label: string) => migration.monthCard(page, label).getByText("Más bajo", { exact: true }),
+  /** «Actualizando»: a priced month still being searched. */
+  updating: (page: Page, label: string) => migration.monthCard(page, label).getByText("Actualizando", { exact: true }),
+};
+
+/* ---- Reading a result row ---- */
+
+export interface CardLeg {
+  direction: "Ida" | "Vuelta";
+  departs: string;
+  arrives: string;
+  dayOffset: number;
+  duration: string;
+  stops: string;
+}
+
+export interface CardReading {
+  label: string;
+  airline: string;
+  provider: string;
+  currency: string;
+  amount: number;
+  legs: CardLeg[];
+}
+
+const LEG_PATTERN = /(Ida|Vuelta): (\d\d:\d\d) a (\d\d:\d\d)(?:, llega \+(\d+) día)?, ([^,]+), ([^.]+)\./g;
+
+export function readCardLabel(label: string): CardReading {
+  const airline = /^(?:Seleccionar oferta|Oferta seleccionada)\. ([^.]+)\./.exec(label)?.[1] ?? "";
+  const price = /(USD|PEN|S\/) ([\d.,]+) total/.exec(label);
+  const provider = label.slice(label.lastIndexOf(". ") + 2);
+  const legs = [...label.matchAll(LEG_PATTERN)].map((match): CardLeg => ({
+    direction: match[1] as CardLeg["direction"],
+    departs: match[2]!,
+    arrives: match[3]!,
+    dayOffset: Number(match[4] ?? 0),
+    duration: match[5]!,
+    stops: match[6]!,
+  }));
+  return {
+    label,
+    airline,
+    provider,
+    currency: price?.[1] ?? "",
+    amount: Number((price?.[2] ?? "NaN").replace(/,/g, "")),
+    legs,
+  };
+}
+
+/** The rows on screen, in order, read from their accessible names. */
+export async function readCards(page: Page): Promise<CardReading[]> {
+  const labels = await results.cards(page).evaluateAll((elements) => elements.map((element) => element.getAttribute("aria-label") ?? ""));
+  return labels.map(readCardLabel);
+}
+
+/** «1h 25m» → 85. */
+export function durationMinutes(value: string): number {
+  const match = /^(?:(\d+)h)?\s*(?:(\d+)m)?$/.exec(value.trim());
+  return match ? Number(match[1] ?? 0) * 60 + Number(match[2] ?? 0) : Number.NaN;
+}
+
+/** The header's figure: «3» or «3 de 6». */
+export async function readResultCount(page: Page): Promise<{ visible: number; total: number } | undefined> {
+  const text = await results.headerLine(page).innerText();
+  const match = /(\d[\d,.]*)(?: de (\d[\d,.]*))?/.exec(text.replace(/^(Resultados|Vuelo migratorio)\s*/, ""));
+  if (!match) {
+    return undefined;
+  }
+  const visible = Number(match[1]!.replace(/[,.]/g, ""));
+  return { visible, total: match[2] ? Number(match[2].replace(/[,.]/g, "")) : visible };
+}
+
+/* ---- Geometry the product promises, measured without coordinates in the test ---- */
+
+/** Page-level horizontal overflow: the document wider than its viewport. */
+export async function horizontalOverflow(page: Page): Promise<number> {
+  return page.evaluate(() => Math.max(
+    document.documentElement.scrollWidth,
+    document.body.scrollWidth,
+  ) - window.innerWidth);
+}
+
+/** Whether an element is on screen and not covered or clipped at its centre. */
+export async function isOnScreen(locator: Locator): Promise<boolean> {
+  return locator.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+    if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= window.innerHeight || rect.left >= window.innerWidth) return false;
+    const x = Math.min(window.innerWidth - 1, Math.max(0, rect.left + rect.width / 2));
+    const y = Math.min(window.innerHeight - 1, Math.max(0, rect.top + rect.height / 2));
+    const hit = document.elementFromPoint(x, y);
+    return Boolean(hit && (hit === element || element.contains(hit)));
+  });
+}
+
+/** Whether all of an element's box is inside the viewport. */
+export async function isFullyInViewport(locator: Locator): Promise<boolean> {
+  return locator.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0
+      && rect.top >= 0 && rect.left >= 0
+      && rect.bottom <= window.innerHeight && rect.right <= window.innerWidth;
+  });
+}
+
+/** Whether all of an element's box is inside another's: a row inside the list's viewport. */
+export async function isWithin(locator: Locator, container: Locator): Promise<boolean> {
+  const [box, frame] = await Promise.all([locator.boundingBox(), container.boundingBox()]);
+  return Boolean(box && frame
+    && box.y >= frame.y - 1 && box.y + box.height <= frame.y + frame.height + 1
+    && box.x >= frame.x - 1 && box.x + box.width <= frame.x + frame.width + 1);
+}
+
+/** How far the nearest ancestor that scrolls an element has been scrolled. */
+export async function scrollerOffset(locator: Locator): Promise<number> {
+  return locator.evaluate((element) => {
+    for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      const overflow = window.getComputedStyle(ancestor).overflowY;
+      if ((overflow === "auto" || overflow === "scroll") && ancestor.scrollHeight > ancestor.clientHeight) return ancestor.scrollTop;
+    }
+    return document.scrollingElement?.scrollTop ?? 0;
+  });
+}
+
+/** The font families the page sets its visible text in, one entry per family. */
+export async function textFontFamilies(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const families = new Set<string>();
+    for (const element of document.body.querySelectorAll("*")) {
+      const holdsText = [...element.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
+      if (holdsText && element.checkVisibility()) families.add(window.getComputedStyle(element).fontFamily);
+    }
+    return [...families];
+  });
+}
+
+/** Whether a text element shows all of its text (no ellipsis, no clip). */
+export async function showsWholeText(locator: Locator): Promise<boolean> {
+  return locator.evaluate((element) => element.scrollWidth <= element.clientWidth + 1);
+}
+
+/** The opacity an element is drawn with, its ancestors' included. */
+export async function drawnOpacity(locator: Locator): Promise<number> {
+  return locator.evaluate((element) => {
+    let opacity = 1;
+    for (let node: Element | null = element; node; node = node.parentElement) {
+      opacity *= Number(window.getComputedStyle(node).opacity);
+    }
+    return opacity;
+  });
+}
+
+/* ---- Focus and structure ---- */
+
+export async function isFocused(locator: Locator): Promise<boolean> {
+  return locator.evaluate((element) => element === document.activeElement);
+}
+
+/** Ids the document holds more than once. */
+export async function duplicateIds(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const ids = [...document.querySelectorAll("[id]")].map((element) => element.id);
+    return [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
+  });
+}
+
+/**
+ * Records, from before the page's first script, the `aria-label` of every
+ * element the page takes out of its document, and returns a reader of what was
+ * taken out so far. A control that is built once is never on the list.
+ */
+export async function recordRemovedControls(page: Page): Promise<() => Promise<string[]>> {
+  await page.addInitScript(() => {
+    const removed: string[] = [];
+    (window as unknown as { __e2eRemovedControls: string[] }).__e2eRemovedControls = removed;
+    new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.removedNodes) {
+          if (!(node instanceof Element)) continue;
+          for (const element of [node, ...node.querySelectorAll("[aria-label]")]) {
+            const name = element.getAttribute("aria-label");
+            if (name) removed.push(name);
+          }
+        }
+      }
+    }).observe(document, { childList: true, subtree: true });
+  });
+  return () => page.evaluate(() => (window as unknown as { __e2eRemovedControls?: string[] }).__e2eRemovedControls ?? []);
+}
+
+/**
+ * Counts, from now on and at every change of the document, the offer panels it
+ * holds — a panel is its «Cotizar» — and returns a reader of the most it has
+ * held at once.
+ */
+export async function watchOfferPanels(page: Page): Promise<() => Promise<number>> {
+  await page.evaluate(() => {
+    const count = () => [...document.querySelectorAll("button")]
+      .filter((button) => /^(Cotizar|Copiado)$/.test(button.textContent?.trim() ?? "")).length;
+    const seen = { most: count() };
+    (window as unknown as { __e2eOfferPanels: typeof seen }).__e2eOfferPanels = seen;
+    new MutationObserver(() => {
+      seen.most = Math.max(seen.most, count());
+    }).observe(document, { childList: true, subtree: true });
+  });
+  return () => page.evaluate(() => (window as unknown as { __e2eOfferPanels: { most: number } }).__e2eOfferPanels.most);
+}
+
+/**
+ * Whether an element is drawn and nothing that clips it cuts it: every
+ * ancestor that hides overflow holds its whole box, and that ancestor's own
+ * content is not wider than it (an ellipsis). Inline labels have no width of
+ * their own to compare, so the clipping ancestor is what is measured. An
+ * element laid out with `display: contents` has no box at all: its text is
+ * what is drawn, so each piece of it is measured against every box between
+ * that text and the page.
+ */
+export async function isUnclipped(locator: Locator): Promise<boolean> {
+  return locator.evaluate((element) => {
+    const cut = (box: DOMRect, from: Element | null): boolean => {
+      for (let ancestor = from; ancestor; ancestor = ancestor.parentElement) {
+        const style = window.getComputedStyle(ancestor);
+        /* An element that draws no box clips nothing. */
+        if (style.display === "contents") continue;
+        const frame = ancestor.getBoundingClientRect();
+        if (style.overflowX !== "visible" && (box.left < frame.left - 0.5 || box.right > frame.right + 0.5)) return true;
+        if (style.overflowY !== "visible" && (box.top < frame.top - 0.5 || box.bottom > frame.bottom + 0.5)) return true;
+        if (style.textOverflow === "ellipsis" && ancestor.scrollWidth > ancestor.clientWidth + 1) return true;
+      }
+      return false;
+    };
+    if (window.getComputedStyle(element).display !== "contents") {
+      const box = element.getBoundingClientRect();
+      return box.width > 0 && box.height > 0 && !cut(box, element.parentElement);
+    }
+    const texts = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let drawn = false;
+    for (let text = texts.nextNode(); text; text = texts.nextNode()) {
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const box = range.getBoundingClientRect();
+      /* Text under a hidden element takes no room and is not seen. */
+      if (box.width === 0 || box.height === 0) continue;
+      if (cut(box, text.parentElement)) return false;
+      drawn = true;
+    }
+    return drawn;
+  });
+}
+
+/** The visible stop labels of a row that stops once: «1 escala · BOG» on a desk, «1 esc · BOG» on a phone. */
+export function oneStopLabels(root: Root): Locator {
+  return root.getByText(/^1 esc(ala)? · [A-Z]{3}$/).filter({ visible: true });
+}

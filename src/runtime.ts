@@ -1,7 +1,3 @@
-import { loadRuntimeConfig } from "./config";
-import { LocalAgilProvider } from "./core/agil-provider";
-import { LocalCostamarProvider } from "./core/costamar-provider";
-import { SearchOrchestrator } from "./core/orchestrator";
 import { LocationSuggestionCacheStore } from "./location-suggestion-cache";
 import { LocationUsageStore } from "./location-usage-store";
 import { resolvePersistPath } from "./runtime-paths";
@@ -15,7 +11,6 @@ import {
 import { providerPrewarmEnabled, providerPrewarmIntervalMs } from "./provider-prewarm";
 
 export interface RuntimeServices {
-  orchestrator: SearchOrchestrator;
   locationSuggestions: LocationSuggestionCacheStore;
   locationUsage: LocationUsageStore;
   providerStatus: ProviderStatusTracker;
@@ -36,6 +31,7 @@ export function getSessionStoreIfInitialized(): SearchSessionStore | undefined {
 
 export function maintainSessionStoreIfInitialized(): void {
   sessionStore?.purgeExpired();
+  sessionStore?.reclaimFreePages();
 }
 
 export function getRuntime(): RuntimeServices {
@@ -43,12 +39,7 @@ export function getRuntime(): RuntimeServices {
     return runtime;
   }
 
-  loadRuntimeConfig();
   runtime = {
-    orchestrator: new SearchOrchestrator([
-      new LocalAgilProvider(),
-      new LocalCostamarProvider(),
-    ]),
     locationSuggestions: new LocationSuggestionCacheStore({
       dbPath: resolvePersistPath(
         "FLY_DESK_LOCATION_SUGGESTION_DB_PATH",
@@ -61,8 +52,8 @@ export function getRuntime(): RuntimeServices {
         "location-usage.sqlite",
       ),
     }),
-    /* The rail says «aparecer = disponible» (03 §5), so an observation must
-       not expire before the thing that renews it comes round again. */
+    /* An observation must not expire before the prewarm that renews it comes
+       round again. */
     providerStatus: createProviderStatusTracker({
       ttlMs: providerPrewarmEnabled()
         ? providerStatusTtlMsFor(providerPrewarmIntervalMs())

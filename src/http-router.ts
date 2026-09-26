@@ -1,4 +1,5 @@
-import { materializeSearchResponse } from "./core/orchestrator";
+import { materializeSearchResponse } from "./core/search-response";
+import { envNumber } from "./env";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
 import { buildOfferScheduleGroups } from "./core/offer-schedule-groups";
 import {
@@ -8,7 +9,6 @@ import {
 } from "./core/quotation";
 import { buildOfferSignature } from "./core/offer-signature";
 import type { ProviderSearchResult } from "./core/provider";
-import { timingSafeEqual } from "node:crypto";
 import {
   CanonicalOffer,
   LocationSuggestion,
@@ -35,46 +35,37 @@ import {
 } from "./http-search-contract";
 import {
   AGIL_CONCURRENCY,
-  createLocalAgilSearchDraft,
   resolveLocalAgilExactProgressive,
   createLocalAgilMatrixDraft,
   resolveLocalAgilMatrixProgressive,
   resolveLocalAgilRangeProgressive,
-  resolveAgilChromeLaunchOptions,
   suggestLocalAgilLocations,
 } from "./local-agil";
 import {
   COSTAMAR_CONCURRENCY,
-  applyCostamarContextToBrandedSearchUrl,
   buildCostamarPurchasePaths,
   createLocalCostamarMatrixDraft,
-  createLocalCostamarSearchDraft,
-  getLastCostamarWarmupDiagnostics,
-  isAllowedCostamarBrandedSearchLocation,
-  resolveCostamarRedirectForRequest,
-  safeCostamarRedirectFailureReason,
   resolveLocalCostamarExactProgressive,
   resolveLocalCostamarMatrixProgressive,
   resolveLocalCostamarRangeProgressive,
   suggestLocalCostamarLocations,
 } from "./local-costamar";
-import { openUrlLocally } from "./local-browser";
 import {
-  getCostamarTokenStatus,
   normalizeCostamarProviderContext,
   resolveProviderId,
-  resolveUsableCostamarBrandedToken,
-  verifyCostamarTokenLive,
 } from "./provider-context";
 import {
   resolveStandaloneUsdToPenRateInfo,
 } from "./quotation-exchange-rate";
 import { SearchAdmissionError, type SearchAdmissionKind } from "./search-admission";
-import { resolveAcceptedApiAccessTokens } from "./service-auth";
+import { withProviderJobSignal } from "./provider-fetch";
+import { enumerateUsefulFlexibleRequests } from "./core/flexible-search";
+import { hasAcceptedApiAccessToken } from "./service-auth";
 import {
   isSearchServiceDelegationConfigured,
   isSearchServiceProxiedRequest,
   isSearchServiceRoute,
+  MAX_SEARCH_SERVICE_TIMEOUT_MS,
   maybeProxySearchServiceRequest,
 } from "./search-service-client";
 import { runProviderMatrixInWorker, runProviderSearchInWorker } from "./search-worker-client";
@@ -92,16 +83,16 @@ import {
   createWebSessionCookie,
   getWebAuthConfigError,
   hasValidWebSession,
+  isTrustedLocalRequest,
   isWebAuthEnabled,
   loginPageLocation,
   renderLoginPage,
   renewWebSessionCookies,
   resolveSafeNextPath,
   resolveWebTheme,
-  shouldTrustReverseProxyLoopbackClient,
-  shouldTrustLoopbackClient,
   verifyWebPassword,
   WEB_SESSION_COOKIE_NAME,
+  webSessionHolder,
 } from "./web-auth";
 import {
   checkWebLoginAdmission,
@@ -127,12 +118,6 @@ interface QuotationPayload extends SessionPayload {
   migrationPlan?: boolean;
 }
 
-interface LocalOpenPayload {
-  url?: string;
-  preferredBrowser?: "chrome" | "default";
-}
-
-type LocalOpenUrlOpener = typeof openUrlLocally;
 interface QuotationSource {
   sessionId: string;
   offerId: string;
@@ -143,17 +128,7 @@ interface QuotationSource {
   cellKey?: string;
 }
 
-type QuotationOfferValidator = (source: QuotationSource) => Promise<CanonicalOffer | undefined>;
-
-let localOpenUrlOpener: LocalOpenUrlOpener = openUrlLocally;
-let quotationOfferValidatorOverride: QuotationOfferValidator | undefined;
-
-export function setQuotationOfferValidatorForTests(validator?: QuotationOfferValidator): void {
-  quotationOfferValidatorOverride = validator;
-}
-
 interface ProgressiveSearchAdapter {
-  createSearchDraft(request: SearchRequest, providerMeta: { exactProvider: ProviderId; coverageMode: SearchRequest["coverageMode"] }): SearchResponse;
   resolveExactProgressive(
     request: SearchRequest,
     providerContext: ProviderContext | undefined,
@@ -184,7 +159,7 @@ interface ProviderSearchState {
   fresh: boolean;
 }
 
-export function mergeProviderSearchProgress(
+function mergeProviderSearchProgress(
   current: ProviderSearchState | undefined,
   update: ProviderSearchResult,
 ): ProviderSearchState {
@@ -205,7 +180,7 @@ export function mergeProviderSearchProgress(
   };
 }
 
-export interface ProviderMatrixState {
+interface ProviderMatrixState {
   response: MatrixResponse;
   completed: boolean;
   cellIndex: Map<string, number>;
@@ -213,7 +188,6 @@ export interface ProviderMatrixState {
 
 const PROGRESSIVE_ADAPTERS: Record<ProviderId, ProgressiveSearchAdapter> = {
   "agil-local": {
-    createSearchDraft: createLocalAgilSearchDraft,
     resolveExactProgressive: (request, _providerContext, onUpdate) =>
       resolveLocalAgilExactProgressive(request, onUpdate),
     resolveRangeProgressive: (request, _providerContext, onUpdate) =>
@@ -223,7 +197,6 @@ const PROGRESSIVE_ADAPTERS: Record<ProviderId, ProgressiveSearchAdapter> = {
       resolveLocalAgilMatrixProgressive(request, draft, onCellResolved),
   },
   costamar: {
-    createSearchDraft: createLocalCostamarSearchDraft,
     resolveExactProgressive: (request, providerContext, onUpdate) =>
       resolveLocalCostamarExactProgressive(request, providerContext, onUpdate),
     resolveRangeProgressive: (request, providerContext, onUpdate) =>
@@ -234,24 +207,20 @@ const PROGRESSIVE_ADAPTERS: Record<ProviderId, ProgressiveSearchAdapter> = {
   },
 };
 
-export const SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
-export const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
-  const raw = Number(process.env.SEARCH_REVALIDATION_CACHE_TTL_MS ?? SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS);
-  return Number.isFinite(raw) && raw >= 0
-    ? raw
-    : SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS;
+const SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
+const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
+  const configured = envNumber("SEARCH_REVALIDATION_CACHE_TTL_MS", SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS);
+  return configured >= 0 ? configured : SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS;
 })();
 const SEARCH_REVALIDATION_CACHE_WARNING = "Mostrando resultados cacheados mientras actualizamos en segundo plano.";
 const SEARCH_PROGRESS_SYNC_INTERVAL_MS = 900;
 const SEARCH_CANCELLED_WARNING = "Search cancelled by user.";
 const SEARCH_REFRESH_CANCELLED_WARNING = "Search stopped because the page was refreshed.";
-const DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS = 55_000;
-const MAX_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS = 240_000;
+const SEARCH_UNFOLLOWED_WARNING = "Search stopped because its page stopped following it.";
+const SEARCH_FAILED_UNEXPECTEDLY = "Search failed unexpectedly.";
 function readNonNegativeEnvMs(name: string, fallbackMs: number): number {
-  const raw = Number(process.env[name] ?? fallbackMs);
-  return Number.isFinite(raw) && raw >= 0
-    ? Math.trunc(raw)
-    : fallbackMs;
+  const configured = envNumber(name, fallbackMs);
+  return configured >= 0 ? Math.trunc(configured) : fallbackMs;
 }
 
 function backgroundSearchStartDelayMs(): number {
@@ -288,21 +257,14 @@ function progressSyncKey(kind: "search" | "matrix", jobId: string): string {
 /**
  * Publishes a running job's progress on a trailing schedule.
  *
- * Every search mode is published as it resolves. Exact used to be the one that
- * was not: `mark()` returned early for it, so a search whose provider answered
- * in seven parts — Agil resolves its seven GDS ids separately and reports each
- * one — showed nothing until all seven were in. On a long-haul route that is
- * the whole wait: a LIM–MIL round trip published one revision, at 15.3s, while
- * the first GDS had answered around five. Withholding it bought a list that
- * never re-sorts under the reader, which is worth less than seeing the flights:
- * the «Parcial» pill already says more is coming, and the range searches have
- * always worked this way.
- *
- * The trailing schedule is what keeps that from becoming churn: a flush lands
- * at most every `intervalMs`, and only on a geometric milestone — 1, 2, 4, 8 —
- * so seven GDS replies are three publishes, not seven.
+ * Every search mode is published as it resolves, exact included: Agil resolves
+ * its seven GDS ids separately, and seeing the first flights is worth more than
+ * a list that never re-sorts under the reader; the «Parcial» pill already says
+ * more is coming. The trailing schedule keeps that from becoming churn: a flush
+ * lands at most every `intervalMs`, and only on a geometric milestone — 1, 2,
+ * 4, 8 — so seven GDS replies are three publishes, not seven.
  */
-export function createTrailingProgressSync(
+function createTrailingProgressSync(
   sync: () => void,
   intervalMs = SEARCH_PROGRESS_SYNC_INTERVAL_MS,
 ): ProgressSyncController {
@@ -392,6 +354,201 @@ export function flushPendingProgressForShutdown(): void {
   }
 }
 
+/*
+ * The jobs this process runs, each with the signal that stops its provider
+ * work or takes it out of the admission queue, and when somebody last
+ * followed it.
+ *
+ * A desk follows a job by long-polling it, and a poll parked on the job counts
+ * as following it for as long as it is parked. A job nobody has followed for
+ * the lease (`FLY_DESK_SEARCH_JOB_LEASE_MS`, 90 s by default) is stopped the
+ * way a closed page stops it: its results so far are kept, its provider
+ * requests are hung up on, and its capacity is released. That is what frees a
+ * search whose page went away without saying so — a laptop put to sleep, a
+ * lost network, an expired session — and a queued search nobody waits for.
+ * The lease is above the longest gap a live desk leaves between two polls: a
+ * background tab's timers may run once a minute, and a poll parks up to 20 s.
+ */
+type JobKind = "search" | "matrix";
+
+interface LiveJob {
+  controller: AbortController;
+  followedAtMs: number;
+  parkedPolls: number;
+}
+
+const DEFAULT_SEARCH_JOB_LEASE_MS = 90_000;
+const liveJobs = new Map<string, LiveJob>();
+let leaseTimer: ReturnType<typeof setInterval> | undefined;
+
+function searchJobLeaseMs(): number {
+  return Math.trunc(envNumber("FLY_DESK_SEARCH_JOB_LEASE_MS", DEFAULT_SEARCH_JOB_LEASE_MS, { min: 1_000 }));
+}
+
+function liveJobKey(kind: JobKind, jobId: string): string {
+  return `${kind}:${jobId}`;
+}
+
+function startLiveJob(kind: JobKind, jobId: string): AbortSignal {
+  const job: LiveJob = { controller: new AbortController(), followedAtMs: Date.now(), parkedPolls: 0 };
+  liveJobs.set(liveJobKey(kind, jobId), job);
+  if (!leaseTimer) {
+    const leaseMs = searchJobLeaseMs();
+    leaseTimer = setInterval(() => stopUnfollowedJobs(leaseMs), Math.min(5_000, Math.max(250, Math.trunc(leaseMs / 4))));
+    leaseTimer.unref?.();
+  }
+  return job.controller.signal;
+}
+
+function endLiveJob(kind: JobKind, jobId: string): void {
+  liveJobs.delete(liveJobKey(kind, jobId));
+  if (liveJobs.size === 0 && leaseTimer) {
+    clearInterval(leaseTimer);
+    leaseTimer = undefined;
+  }
+}
+
+/** Stops a job's provider work, or takes it out of the admission queue. */
+function abortLiveJob(kind: JobKind, jobId: string): void {
+  liveJobs.get(liveJobKey(kind, jobId))?.controller.abort();
+}
+
+/** Every job this process runs, stopped: its provider work, or its wait. */
+export function abortLiveJobs(): void {
+  for (const job of liveJobs.values()) {
+    job.controller.abort();
+  }
+}
+
+/* A long poll follows its job while it is parked, and from its answer on. A
+   plain read of the job, which a desk never makes of a job it follows, does
+   not keep it alive. */
+async function followLiveJob(kind: JobKind, jobId: string, wait: () => Promise<void>): Promise<void> {
+  const job = liveJobs.get(liveJobKey(kind, jobId));
+  if (!job) {
+    return wait();
+  }
+
+  job.parkedPolls += 1;
+  try {
+    await wait();
+  } finally {
+    job.parkedPolls -= 1;
+    job.followedAtMs = Date.now();
+  }
+}
+
+function stopUnfollowedJobs(leaseMs: number): void {
+  const nowMs = Date.now();
+  for (const [key, job] of liveJobs) {
+    if (job.parkedPolls > 0 || nowMs - job.followedAtMs <= leaseMs || job.controller.signal.aborted) {
+      continue;
+    }
+
+    const separator = key.indexOf(":");
+    const kind = key.slice(0, separator) as JobKind;
+    const jobId = key.slice(separator + 1);
+    console.warn(`Fly Desk stopped a ${kind} job nobody followed for ${nowMs - job.followedAtMs}ms: ${jobId}`);
+    stopJob(getRuntime(), kind, jobId, SEARCH_UNFOLLOWED_WARNING, true);
+  }
+}
+
+/*
+ * Ends a running job the way the desk's stop does: what it found is kept when
+ * `cachePartial` asks for it, the job leaves the queue or its provider work is
+ * hung up on, and its capacity is released as that work settles.
+ */
+function stopJob(runtime: ReturnType<typeof getRuntime>, kind: "search", jobId: string, message: string, cachePartial: boolean): SearchJobRecord | undefined;
+function stopJob(runtime: ReturnType<typeof getRuntime>, kind: "matrix", jobId: string, message: string, cachePartial: boolean): MatrixJobRecord | undefined;
+function stopJob(runtime: ReturnType<typeof getRuntime>, kind: JobKind, jobId: string, message: string, cachePartial: boolean): SearchJobRecord | MatrixJobRecord | undefined;
+function stopJob(
+  runtime: ReturnType<typeof getRuntime>,
+  kind: JobKind,
+  jobId: string,
+  message: string,
+  cachePartial: boolean,
+): SearchJobRecord | MatrixJobRecord | undefined {
+  disposePendingProgressSync(kind, jobId, cachePartial);
+  const job = kind === "search"
+    ? runtime.sessions.cancelSearchJob(jobId, message, { cachePartial })
+    : runtime.sessions.cancelMatrixJob(jobId, message, { cachePartial });
+  abortLiveJob(kind, jobId);
+  return job;
+}
+
+/* Which signed-in browser asked; capacity is shared out between these. */
+function searchSessionKey(request: Request): string | undefined {
+  return webSessionHolder(request);
+}
+
+/*
+ * Asks admission for a job's capacity, then runs it. While the job waits it is
+ * marked `queued`, which the desk reads to say so; the mark goes the moment it
+ * starts. Its units are released exactly once, when `run` settles, however it
+ * ends. A job stopped while it waits never starts, and one the runner turns
+ * away as it shuts down is stopped with the runner's reason.
+ */
+function admitAndRunJob(
+  runtime: ReturnType<typeof getRuntime>,
+  job: { kind: JobKind; id: string },
+  admission: { kind: SearchAdmissionKind; daySearches?: number; sessionKey?: string },
+  startDelayMs: number,
+  run: (signal: AbortSignal) => Promise<void>,
+): void {
+  const signal = startLiveJob(job.kind, job.id);
+  const markQueued = (queued: boolean) => {
+    const update = <T extends SearchJobRecord | MatrixJobRecord>(current: T): T => {
+      if (Boolean(current.queued) === queued || current.status !== "running") {
+        return current;
+      }
+      const { queued: _queued, ...rest } = current;
+      return (queued ? { ...rest, queued: true } : rest) as T;
+    };
+    if (job.kind === "search") {
+      runtime.sessions.updateSearchJob(job.id, update, { persist: false });
+    } else {
+      runtime.sessions.updateMatrixJob(job.id, update, { persist: false });
+    }
+  };
+
+  runtime.searchAdmission.acquire({
+    ...admission,
+    jobId: job.id,
+    signal,
+    onQueued: () => markQueued(true),
+  }).then(
+    (lease) => {
+      markQueued(false);
+      scheduleBackgroundSearchJob(() => {
+        void (signal.aborted ? Promise.resolve() : run(signal))
+          .catch((error: unknown) => {
+            console.error(`Fly Desk ${job.kind} job ${job.id} failed: ${error instanceof Error ? error.name : "Error"}`);
+            failJob(runtime, job.kind, job.id, SEARCH_FAILED_UNEXPECTEDLY);
+          })
+          .finally(() => {
+            lease.release();
+            endLiveJob(job.kind, job.id);
+          });
+      }, startDelayMs);
+    },
+    (error: unknown) => {
+      endLiveJob(job.kind, job.id);
+      if (!signal.aborted) {
+        stopJob(runtime, job.kind, job.id, error instanceof SearchAdmissionError ? error.message : SEARCH_FAILED_UNEXPECTEDLY, true);
+      }
+    },
+  );
+}
+
+/* A range asks one exact search per day (or day pair): what its cost grows with. */
+function searchAdmissionFor(request: SearchRequest): { kind: SearchAdmissionKind; daySearches?: number } {
+  if (request.searchMode !== "stay-range") {
+    return { kind: "exact" };
+  }
+
+  return { kind: "range", daySearches: enumerateUsefulFlexibleRequests(request).length };
+}
+
 function providerDiagnosticKindForRequest(request: SearchRequest): ProviderDiagnosticKind {
   return request.searchMode === "stay-range" ? "range" : "exact";
 }
@@ -468,7 +625,7 @@ function applyProviderDiagnosticSummary(
   entries: ProviderDiagnostics[] | undefined,
   providerId: ProviderId,
   status: ProviderDiagnostics["status"],
-  summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "error">,
+  summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "partial" | "error">,
 ): ProviderDiagnostics[] {
   return updateProviderDiagnosticsEntry(entries, providerId, (entry) => {
     setProviderDiagnosticStatus(entry, status, summary);
@@ -485,156 +642,14 @@ function json(body: unknown, init?: ResponseInit): Response {
   });
 }
 
-function html(body: string, init?: ResponseInit): Response {
-  return new Response(body, {
-    status: init?.status ?? 200,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      ...(init?.headers ?? {}),
-    },
-  });
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function costamarRedirectBlockedResponse(reason?: string): Response {
-  const reasonText = reason?.trim() ? escapeHtml(reason.trim()) : "No se pudo validar ni renovar el redirect de Click and Book Plus.";
-  return html(`<!doctype html>
-<html lang="es">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Renueva la autenticación de Click and Book Plus</title>
-    <style>
-      :root { color-scheme: light; }
-      * {
-        box-sizing: border-box;
-      }
-      html {
-        min-height: 100%;
-      }
-      body {
-        margin: 0;
-        min-height: 100dvh;
-        overflow: hidden;
-        display: grid;
-        place-items: center;
-        padding: 20px;
-        font-family: "Segoe UI", Arial, sans-serif;
-        background: #f8f8f6;
-        color: #2d2a26;
-      }
-      main {
-        width: min(560px, 100%);
-        max-width: 560px;
-      }
-      section {
-        background: rgba(255, 255, 255, 0.92);
-        border: 1px solid rgba(112, 77, 31, 0.12);
-        border-radius: 12px;
-        padding: 24px;
-        box-shadow: 0 20px 45px rgba(88, 59, 24, 0.08);
-      }
-      h1 {
-        margin: 0 0 12px;
-        font-size: 28px;
-        line-height: 1.15;
-      }
-      p {
-        margin: 0 0 12px;
-        line-height: 1.55;
-      }
-      p:last-child {
-        margin-bottom: 0;
-      }
-      @media (max-width: 480px) {
-        body {
-          padding: 16px;
-        }
-        section {
-          padding: 20px;
-        }
-        h1 {
-          font-size: 24px;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <section>
-        <h1>Renueva la autenticación de Click and Book Plus</h1>
-        <p>Fly Desk no encontro un redirect verificado para abrir esta busqueda en Click and Book Plus.</p>
-        <p><strong>Motivo:</strong> ${reasonText}</p>
-        <p>Abre Click and Book Plus B2B/Chrome, vuelve a autenticarte y reintenta desde Fly Desk.</p>
-      </section>
-    </main>
-  </body>
-</html>`, {
-    status: 409,
-    headers: {
-      "Cache-Control": "no-store",
-    },
-  });
-}
-
-function costamarRedirectTotalTimeoutMs(): number {
-  const configured = Number(
-    process.env.CBPLUS_REDIRECT_TOTAL_TIMEOUT_MS?.trim()
-      ?? process.env.COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS
-      ?? DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS,
-  );
-  if (!Number.isFinite(configured)) {
-    return DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS;
-  }
-
-  return Math.max(
-    1_000,
-    Math.min(MAX_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS, Math.trunc(configured)),
-  );
-}
-
-async function withCostamarRedirectTotalTimeout<T>(promise: Promise<T>): Promise<T> {
-  const timeoutMs = costamarRedirectTotalTimeoutMs();
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(() => {
-          reject(new Error(`La validacion del redirect de Click and Book Plus tardo mas de ${timeoutMs}ms.`));
-        }, timeoutMs);
-        if (typeof timeout === "object" && timeout && "unref" in timeout) {
-          (timeout as { unref: () => void }).unref();
-        }
-      }),
-    ]);
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-  }
-}
-
 function stringValue(input: unknown, fallback = ""): string {
   return typeof input === "string" ? input.trim() : fallback;
 }
 
 function integerParam(input: string | null, fallback: number, min: number, max: number): number {
-  /* `searchParams.get` returns null for a parameter that is not there, and
-     `Number(null)` is 0, not NaN - so an absent parameter used to sail past the
-     finite check and get clamped up to `min` instead of falling back. Every
-     caller that relies on the fallback silently received its minimum: the
-     location ranking asked for three cards and was given one, which is why two
-     of the three slots under each field were always empty. */
+  /* `searchParams.get` returns null for an absent parameter, and `Number(null)`
+     is 0, not NaN: without this check it would pass the finite test and be
+     clamped up to `min` instead of falling back. */
   if (input === null || input.trim() === "") {
     return fallback;
   }
@@ -654,7 +669,7 @@ function currentSearchMeta(searchMeta: SearchMeta): SearchMeta {
   };
 }
 
-export function shouldPersistProgressSnapshot(lastPersistedCount: number, currentCount: number): boolean {
+function shouldPersistProgressSnapshot(lastPersistedCount: number, currentCount: number): boolean {
   return currentCount > 0
     && (lastPersistedCount <= 0 || currentCount >= lastPersistedCount * 2);
 }
@@ -671,7 +686,6 @@ function createSearchDraftResponse(
       : "Consultando Agil.";
 
   return {
-    offers: [],
     allOffers: [],
     searchMeta: currentSearchMeta({
       requestedAt,
@@ -802,7 +816,7 @@ function pickAggregatedMatrixCell(
   return selected;
 }
 
-export function materializeAggregatedMatrixResponse(
+function materializeAggregatedMatrixResponse(
   request: SearchRequest,
   providerIds: ProviderId[],
   states: Map<ProviderId, ProviderMatrixState>,
@@ -908,7 +922,7 @@ export function materializeAggregatedMatrixResponse(
   };
 }
 
-export function buildMatrixCellIndex(cells: readonly MatrixCell[]): Map<string, number> {
+function buildMatrixCellIndex(cells: readonly MatrixCell[]): Map<string, number> {
   const index = new Map<string, number>();
   cells.forEach((cell, position) => {
     if (!index.has(cell.key)) {
@@ -918,7 +932,7 @@ export function buildMatrixCellIndex(cells: readonly MatrixCell[]): Map<string, 
   return index;
 }
 
-export function updateMatrixDraftCell(
+function updateMatrixDraftCell(
   response: MatrixResponse,
   cell: MatrixCell,
   cellIndex: ReadonlyMap<string, number>,
@@ -1009,6 +1023,7 @@ async function resolveProviderSearchProgressive(
   diagnostics: ProviderDiagnostics | undefined,
   onProviderEvent: ((event: ProviderDiagnosticEvent) => void) | undefined,
   shouldContinue: (() => boolean) | undefined,
+  signal?: AbortSignal,
 ): Promise<ProviderSearchResult> {
   const kind = request.searchMode === "stay-range" ? "range" : "exact";
   if (shouldUseSearchWorkerProcesses()) {
@@ -1020,6 +1035,7 @@ async function resolveProviderSearchProgressive(
       onProgress,
       onProviderEvent,
       shouldContinue,
+      signal,
     });
   }
 
@@ -1041,10 +1057,11 @@ async function resolveProviderSearchProgressive(
     assertProviderWorkStillRunning(shouldContinue);
     return result;
   };
+  const runUnderSignal = signal ? () => withProviderJobSignal(signal, run) : run;
 
   return diagnostics
-    ? withProviderDiagnostics(diagnostics, onProviderEvent, run)
-    : run();
+    ? withProviderDiagnostics(diagnostics, onProviderEvent, runUnderSignal)
+    : runUnderSignal();
 }
 
 async function resolveProviderMatrixProgressive(
@@ -1056,6 +1073,7 @@ async function resolveProviderMatrixProgressive(
   diagnostics: ProviderDiagnostics | undefined,
   onProviderEvent: ((event: ProviderDiagnosticEvent) => void) | undefined,
   shouldContinue: (() => boolean) | undefined,
+  signal?: AbortSignal,
 ): Promise<MatrixResponse> {
   if (shouldUseSearchWorkerProcesses()) {
     return runProviderMatrixInWorker({
@@ -1066,6 +1084,7 @@ async function resolveProviderMatrixProgressive(
       onCellResolved,
       onProviderEvent,
       shouldContinue,
+      signal,
     });
   }
 
@@ -1088,10 +1107,11 @@ async function resolveProviderMatrixProgressive(
     assertProviderWorkStillRunning(shouldContinue);
     return result;
   };
+  const runUnderSignal = signal ? () => withProviderJobSignal(signal, run) : run;
 
   return diagnostics
-    ? withProviderDiagnostics(diagnostics, onProviderEvent, run)
-    : run();
+    ? withProviderDiagnostics(diagnostics, onProviderEvent, runUnderSignal)
+    : runUnderSignal();
 }
 
 async function suggestLocationsForProvider(
@@ -1101,16 +1121,11 @@ async function suggestLocationsForProvider(
   query: string,
   limit: number,
 ): Promise<Awaited<ReturnType<typeof suggestLocalAgilLocations>>> {
-  return runtime.locationSuggestions.getOrLoad(sessionId, providerId, query, limit, async () => {
-    const provider = runtime.orchestrator.getProvider(providerId);
-    if (provider?.suggestLocations) {
-      return provider.suggestLocations(query, limit);
-    }
-
-    return providerId === "costamar"
+  return runtime.locationSuggestions.getOrLoad(sessionId, providerId, query, limit, () => (
+    providerId === "costamar"
       ? suggestLocalCostamarLocations(query, limit)
-      : suggestLocalAgilLocations(query, limit);
-  });
+      : suggestLocalAgilLocations(query, limit)
+  ));
 }
 
 function mergeLocationSuggestions(
@@ -1137,59 +1152,6 @@ function mergeLocationSuggestions(
   return [...deduped.values()];
 }
 
-function isTrustedLocalRequest(request: Request): boolean {
-  if (!shouldTrustLoopbackClient() || request.headers.get("x-flydesk-client-loopback") !== "1") {
-    return false;
-  }
-
-  if (hasForwardedClientMarker(request) && !shouldTrustReverseProxyLoopbackClient()) {
-    return false;
-  }
-
-  return true;
-}
-
-function hasForwardedClientMarker(request: Request): boolean {
-  return Boolean(
-    request.headers.get("x-forwarded-for")?.trim()
-      || request.headers.get("forwarded")?.trim()
-      || request.headers.get("x-real-ip")?.trim(),
-  );
-}
-
-function resolveProvidedApiAccessToken(request: Request): string | undefined {
-  const tokenHeader = String(request.headers.get("x-flydesk-api-token") ?? "").trim();
-  if (tokenHeader) {
-    return tokenHeader;
-  }
-
-  const authorizationHeader = String(request.headers.get("authorization") ?? "").trim();
-  if (authorizationHeader.toLowerCase().startsWith("bearer ")) {
-    const bearer = authorizationHeader.slice("bearer ".length).trim();
-    return bearer || undefined;
-  }
-
-  return undefined;
-}
-
-function hasValidApiAccessToken(request: Request, expectedTokens: readonly string[]): boolean {
-  const providedToken = resolveProvidedApiAccessToken(request);
-  if (!providedToken) {
-    return false;
-  }
-
-  const provided = Buffer.from(providedToken, "utf8");
-
-  return expectedTokens.some((expectedToken) => {
-    const expected = Buffer.from(expectedToken, "utf8");
-    if (expected.length !== provided.length) {
-      return false;
-    }
-
-    return timingSafeEqual(expected, provided);
-  });
-}
-
 function isTrustedApiRequest(request: Request): boolean {
   if (isTrustedLocalRequest(request)) {
     return true;
@@ -1199,8 +1161,7 @@ function isTrustedApiRequest(request: Request): boolean {
     return true;
   }
 
-  const tokens = resolveAcceptedApiAccessTokens();
-  return tokens.length > 0 ? hasValidApiAccessToken(request, tokens) : false;
+  return hasAcceptedApiAccessToken(request.headers);
 }
 
 function isOfferValidatedForQuotation(offer: CanonicalOffer): boolean {
@@ -1238,7 +1199,7 @@ function offerNeedsQuotationRate(offer: CanonicalOffer, request: SearchRequest):
   return domesticPeru ? currencyCode === "USD" : currencyCode === "PEN";
 }
 
-export function prepareOffersForQuotation(
+function prepareOffersForQuotation(
   request: SearchRequest,
   offers: CanonicalOffer[],
   rateCandidates: readonly CanonicalOffer[] = offers,
@@ -1260,7 +1221,7 @@ export function prepareOffersForQuotation(
   });
 }
 
-export async function resolveQuotationReadyOffers(
+async function resolveQuotationReadyOffers(
   request: SearchRequest,
   offers: CanonicalOffer[],
   resolveRate: QuotationRateResolver = (offer) => resolveStandaloneUsdToPenRateInfo(offer),
@@ -1279,7 +1240,7 @@ export async function resolveQuotationReadyOffers(
   return prepareOffersForQuotation(request, offers.map((offer) => ({ ...offer, usdToPenRate: rateInfo.rate })));
 }
 
-export function createSharedQuotationRateResolver(
+function createSharedQuotationRateResolver(
   lookup: (offer: CanonicalOffer) => Promise<QuotationUsdToPenRateInfo | undefined> = resolveStandaloneUsdToPenRateInfo,
 ): QuotationRateResolver {
   let pending: Promise<QuotationUsdToPenRateInfo | undefined> | undefined;
@@ -1518,24 +1479,54 @@ async function validateQuotationOfferAgainstProvider(source: QuotationSource): P
   return matched ? markOfferValidatedForQuotation(matched) : undefined;
 }
 
+/* A revalidation is a live provider search. Repeated clicks on one offer share
+   it, and it gives up before the web hop's ceiling so the agent gets an answer
+   rather than a proxy timeout. */
+const QUOTATION_VALIDATION_DEADLINE_MS = MAX_SEARCH_SERVICE_TIMEOUT_MS - 10_000;
+const quotationValidationsInFlight = new Map<string, Promise<CanonicalOffer | undefined>>();
+
+function validateQuotationOfferOnce(source: QuotationSource): Promise<CanonicalOffer | undefined> {
+  const key = `${source.sessionId}:${source.offerId}`;
+  const inFlight = quotationValidationsInFlight.get(key);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const validation = Promise.race([
+    validateQuotationOfferAgainstProvider(source).catch(() => undefined),
+    new Promise<undefined>((resolve) => {
+      deadline = setTimeout(resolve, QUOTATION_VALIDATION_DEADLINE_MS, undefined);
+    }),
+  ]).finally(() => {
+    clearTimeout(deadline);
+    quotationValidationsInFlight.delete(key);
+  });
+  quotationValidationsInFlight.set(key, validation);
+  return validation;
+}
+
 async function resolveValidatedQuotationOffer(source: QuotationSource): Promise<CanonicalOffer | undefined> {
   if (isOfferValidatedForQuotation(source.offer)) {
     return source.offer;
   }
 
-  const validator = quotationOfferValidatorOverride ?? validateQuotationOfferAgainstProvider;
-  const validated = await validator(source);
+  const validated = await validateQuotationOfferOnce(source);
   if (!validated || buildOfferSignature(validated) !== buildOfferSignature(source.offer)) {
     return undefined;
   }
 
-  return markOfferValidatedForQuotation({
+  /* The provider answers with a raw offer. It is prepared the way the list
+     prepares one, with the rate of the offer it replaces, so the fare it
+     confirms stays quotable. */
+  const [prepared] = prepareOffersForQuotation(source.request, [{
     ...validated,
     // Provider normalizers include the current price in their generated ID.
     // Keep the session-facing ID stable so the refreshed exact flight replaces
     // the selected record instead of becoming an unreferenced response only.
     id: source.offer.id,
-  });
+  }], [source.offer]);
+  return markOfferValidatedForQuotation(prepared);
 }
 
 function storeValidatedQuotationOffer(
@@ -1543,12 +1534,18 @@ function storeValidatedQuotationOffer(
   source: QuotationSource,
   validatedOffer: CanonicalOffer,
 ): CanonicalOffer {
+  /* The store rewrites provider links to `/r/<id>` handles as it saves. A job
+     that has left memory cannot be updated, and then the answer keeps the
+     stored offer's handles: a provider URL (Click and Book Plus puts its token
+     in it) never reaches the browser. */
+  const unsaved: CanonicalOffer = { ...validatedOffer, purchasePaths: source.offer.purchasePaths };
+
   if (source.kind === "search") {
-    return runtime.sessions.updateOffer(source.sessionId, validatedOffer) ?? validatedOffer;
+    return runtime.sessions.updateOffer(source.sessionId, validatedOffer) ?? unsaved;
   }
 
   if (!source.cellKey) {
-    return validatedOffer;
+    return unsaved;
   }
 
   const updated = runtime.sessions.updateMatrixJob(source.sessionId, (current: MatrixJobRecord) => ({
@@ -1568,7 +1565,7 @@ function storeValidatedQuotationOffer(
       : cell),
   }));
 
-  return updated?.cells.find((cell) => cell.key === source.cellKey)?.offer ?? validatedOffer;
+  return updated?.cells.find((cell) => cell.key === source.cellKey)?.offer ?? unsaved;
 }
 
 function apiAuthRequiredResponse(): Response {
@@ -1653,7 +1650,7 @@ async function handleWebLogin(request: Request, options: { jsonResponse?: boolea
       );
     }
     return new Response(
-      renderLoginPage("Demasiados intentos. Intenta de nuevo mas tarde.", resolveWebTheme(request), next),
+      renderLoginPage("Demasiados intentos. Vuelve a intentarlo en unos minutos.", resolveWebTheme(request), next),
       {
         status: 429,
         headers: {
@@ -1744,24 +1741,6 @@ function handleWebLogout(request: Request, options: { jsonResponse?: boolean } =
   return response;
 }
 
-function validateLocalOpenUrl(input: string): URL | undefined {
-  try {
-    const candidate = new URL(input);
-    const allowedHosts = new Set([
-      "www.agilsmart.com",
-      "agilsmart.com",
-    ]);
-
-    if (candidate.protocol !== "https:" || !allowedHosts.has(candidate.hostname.toLowerCase())) {
-      return undefined;
-    }
-
-    return candidate;
-  } catch {
-    return undefined;
-  }
-}
-
 async function readPayload<T>(request: Request): Promise<T> {
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.includes("application/json")) {
@@ -1784,23 +1763,18 @@ function parseSinceRevision(value: string | null): number | undefined {
  * How long a job poll may be parked before it has to answer.
  *
  * The browser asks with `wait=<ms>` and the store holds the request open until
- * the job moves, which is what removes the polling interval from the latency of
- * a finished search. `wait=0` — the default for any client that does not ask —
- * is exactly the old behaviour.
- *
- * The hop in front of this one covers the hold rather than racing it: the web
- * unit's proxy reads the same `wait` off the request and adds it to its own
- * timeout (`resolveProxyTimeoutMsForRequest`). This comment used to claim that
- * ceiling stayed "well under the search-service proxy timeout (120s by
- * default)", which was a misreading of `FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS`:
- * the proxy's own default is 15s, so a 20s ceiling sat above it and a 15s hold
- * tied with it. A search that went quiet for fifteen seconds — a long-haul
- * route with slow providers is exactly that — reached the agent as an error
- * while the runner was still working.
+ * the job moves, which removes the polling interval from the latency of a
+ * finished search; `wait=0`, the default, answers at once. The hop in front of
+ * this one covers the hold rather than racing it: the web unit's proxy adds the
+ * same `wait` to its own timeout (`resolveProxyTimeoutMsForRequest`).
  */
-export const JOB_POLL_MAX_WAIT_MS = 20_000;
+const JOB_POLL_MAX_WAIT_MS = 20_000;
+/* A capacity poll holds for up to this long when nothing changes: well inside
+   every hop's budget (the web unit's own proxy timeout adds the wait to its
+   15 s), and still a single request every 25 s for an idle desk. */
+const CAPACITY_POLL_MAX_WAIT_MS = 25_000;
 
-function parseJobPollWaitMs(value: string | null): number {
+function parseJobPollWaitMs(value: string | null, maxWaitMs = JOB_POLL_MAX_WAIT_MS): number {
   if (!value) {
     return 0;
   }
@@ -1810,7 +1784,7 @@ function parseJobPollWaitMs(value: string | null): number {
     return 0;
   }
 
-  return Math.min(parsed, JOB_POLL_MAX_WAIT_MS);
+  return Math.min(parsed, maxWaitMs);
 }
 
 function resolveLocationSuggestionSessionId(value: string | null): string | undefined {
@@ -1821,6 +1795,93 @@ function matrixCellHasResult(cell: MatrixCell): boolean {
   return Boolean(cell.offer)
     || typeof cell.price?.amount === "number"
     || Boolean(cell.purchasePaths?.length);
+}
+
+/*
+ * What the browser receives of an offer. `rawRefs` are the provider handles the
+ * backend keeps for revalidation and redirects, and `signature` is the
+ * backend's own dedupe key; neither is drawn or sent back.
+ */
+type PublicOffer = Omit<CanonicalOffer, "rawRefs" | "signature">;
+
+function publicOffer(offer: CanonicalOffer): PublicOffer {
+  const { rawRefs: _rawRefs, signature: _signature, ...rest } = offer;
+  return rest;
+}
+
+function publicMatrixCell(cell: MatrixCell): MatrixCell | Omit<MatrixCell, "offer"> & { offer?: PublicOffer } {
+  return cell.offer ? { ...cell, offer: publicOffer(cell.offer) } : cell;
+}
+
+/*
+ * A job's offers change only with its revision, and they are nearly all of a
+ * poll's answer, so every poll of one revision sends one serialization of them:
+ * the members `"allOffers":[…],"scheduleGroups":[…]`, encoded once. The rest of
+ * the answer is small and is serialized per poll, because provider diagnostics
+ * change within a revision. The cache keeps the revisions polled last, up to a
+ * byte budget, rather than one copy per resident job.
+ *
+ * A long list is not serialized in one piece: it is written to the answer a
+ * batch of offers at a time, as the connection takes it. A month of a sweep is
+ * fourteen thousand fares and 28 MiB of JSON, and serializing it whole took
+ * the runner about 150 MiB at once, just as the month completed.
+ */
+const PUBLIC_OFFERS_JSON_CACHE_MAX_BYTES = 16 * 1024 * 1024;
+const LONG_OFFER_LIST = 2_000;
+const STREAMED_OFFERS_BATCH = 200;
+const publicOffersJsonCache = new Map<readonly CanonicalOffer[], Uint8Array<ArrayBuffer>>();
+let publicOffersJsonCacheBytes = 0;
+const utf8 = new TextEncoder();
+
+function publicOffersJson(allOffers: readonly CanonicalOffer[]): Uint8Array<ArrayBuffer> {
+  const cached = publicOffersJsonCache.get(allOffers);
+  if (cached) {
+    publicOffersJsonCache.delete(allOffers);
+    publicOffersJsonCache.set(allOffers, cached);
+    return cached;
+  }
+
+  const members = utf8.encode(JSON.stringify({
+    allOffers: allOffers.map(publicOffer),
+    scheduleGroups: buildOfferScheduleGroups(allOffers),
+  }).slice(1, -1));
+  publicOffersJsonCache.set(allOffers, members);
+  publicOffersJsonCacheBytes += members.byteLength;
+  for (const [key, value] of publicOffersJsonCache) {
+    if (publicOffersJsonCacheBytes <= PUBLIC_OFFERS_JSON_CACHE_MAX_BYTES || key === allOffers) {
+      break;
+    }
+    publicOffersJsonCache.delete(key);
+    publicOffersJsonCacheBytes -= value.byteLength;
+  }
+  return members;
+}
+
+/* The answer `{...head, "allOffers": [...], "scheduleGroups": [...]}`, written
+   as the connection takes it; `head` is the rest of the answer, less its brace. */
+function streamedOffersBody(head: string, allOffers: readonly CanonicalOffer[]): ReadableStream<Uint8Array> {
+  let next = 0;
+  let done = false;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (done) {
+        controller.close();
+        return;
+      }
+
+      const end = Math.min(allOffers.length, next + STREAMED_OFFERS_BATCH);
+      let chunk = next === 0 ? `${head},"allOffers":[` : "";
+      for (let index = next; index < end; index += 1) {
+        chunk += `${index === 0 ? "" : ","}${JSON.stringify(publicOffer(allOffers[index]!))}`;
+      }
+      next = end;
+      if (next === allOffers.length) {
+        chunk += `],"scheduleGroups":${JSON.stringify(buildOfferScheduleGroups(allOffers))}}`;
+        done = true;
+      }
+      controller.enqueue(utf8.encode(chunk));
+    },
+  });
 }
 
 function matrixJobResponse(
@@ -1839,6 +1900,7 @@ function matrixJobResponse(
     warnings: job.warnings,
     providerDiagnostics: job.providerDiagnostics,
     error: job.error,
+    queued: job.queued === true,
     unchanged,
   };
 
@@ -1848,7 +1910,7 @@ function matrixJobResponse(
 
   return {
     ...base,
-    cells: job.cells.filter(matrixCellHasResult),
+    cells: job.cells.filter(matrixCellHasResult).map(publicMatrixCell),
     axes: job.axes,
     confidenceSummary: job.confidenceSummary,
     recommendations: job.recommendations,
@@ -1868,7 +1930,6 @@ function createCachedSearchDraftResponse(
   ]);
 
   return {
-    offers: cachedJob.offers.map(stripQuotationPreparation),
     allOffers: cachedJob.allOffers.map(stripQuotationPreparation),
     searchMeta: currentSearchMeta({
       requestedAt: now,
@@ -1944,13 +2005,9 @@ function recoverCachedCostamarPurchasePaths(
       ],
     };
   };
-  const allOffers = cachedJob.allOffers.map(repairOffer);
-  const offersById = new Map(allOffers.map((offer) => [offer.id, offer] as const));
-
   return {
     ...cachedJob,
-    allOffers,
-    offers: cachedJob.offers.map((offer) => offersById.get(offer.id) ?? repairOffer(offer)),
+    allOffers: cachedJob.allOffers.map(repairOffer),
   };
 }
 
@@ -2010,120 +2067,6 @@ function isoDateFromValue(value: string | undefined): string | undefined {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString().slice(0, 10);
 }
 
-function isIsoDateValue(value: string | undefined): value is string {
-  return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
-}
-
-function passengerCountFromPath(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(String(value ?? ""), 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
-function exactCostamarRequestFromFallback(fallback: SearchRequest | undefined): SearchRequest | undefined {
-  const leg = fallback?.legs[0];
-  if (!fallback || !leg || fallback.tripType === "multi-city" || !isIsoDateValue(leg.departureDate)) {
-    return undefined;
-  }
-
-  if (fallback.tripType === "round-trip" && !isIsoDateValue(leg.returnDate)) {
-    return undefined;
-  }
-
-  return {
-    ...fallback,
-    providerId: "costamar",
-    searchMode: "exact",
-    flexibleMode: undefined,
-    legs: [
-      {
-        ...leg,
-        departureStart: undefined,
-        departureEnd: undefined,
-        returnStart: undefined,
-        returnEnd: undefined,
-        stayNights: undefined,
-        minNights: undefined,
-        maxNights: undefined,
-      },
-    ],
-  };
-}
-
-function costamarRedirectRequestFromUrl(
-  location: string,
-  fallback: SearchRequest | undefined,
-): SearchRequest | undefined {
-  try {
-    const parsed = new URL(location);
-    const pathParts = parsed.pathname
-      .split("/")
-      .filter(Boolean)
-      .map((part) => decodeURIComponent(part));
-    const markerIndex = pathParts.lastIndexOf("b");
-    if (markerIndex < 0) {
-      return exactCostamarRequestFromFallback(fallback);
-    }
-
-    const parts = pathParts.slice(markerIndex + 1);
-    if (parts.length !== 6 && parts.length !== 7) {
-      return exactCostamarRequestFromFallback(fallback);
-    }
-
-    const isRoundTrip = parts.length === 7;
-    const origin = parts[0]?.trim().toUpperCase();
-    const destination = parts[1]?.trim().toUpperCase();
-    const departureDate = parts[2]?.trim();
-    const returnDate = isRoundTrip ? parts[3]?.trim() : undefined;
-    const passengerOffset = isRoundTrip ? 4 : 3;
-    const fallbackPassengers = fallback?.passengers ?? { adults: 1, children: 0, infants: 0 };
-
-    if (!origin || !destination || !isIsoDateValue(departureDate)) {
-      return exactCostamarRequestFromFallback(fallback);
-    }
-
-    if (isRoundTrip && !isIsoDateValue(returnDate)) {
-      return exactCostamarRequestFromFallback(fallback);
-    }
-
-    const fallbackLeg = fallback?.legs[0];
-    return {
-      providerId: "costamar",
-      tripType: isRoundTrip ? "round-trip" : "one-way",
-      searchMode: "exact",
-      legs: [
-        {
-          ...(fallbackLeg ?? {}),
-          origin,
-          destination,
-          departureDate,
-          departureStart: undefined,
-          departureEnd: undefined,
-          returnDate,
-          returnStart: undefined,
-          returnEnd: undefined,
-          stayNights: undefined,
-          minNights: undefined,
-          maxNights: undefined,
-        },
-      ],
-      passengers: {
-        adults: passengerCountFromPath(parts[passengerOffset], fallbackPassengers.adults || 1),
-        children: passengerCountFromPath(parts[passengerOffset + 1], fallbackPassengers.children || 0),
-        infants: passengerCountFromPath(parts[passengerOffset + 2], fallbackPassengers.infants || 0),
-      },
-      cabin: fallback?.cabin ?? "ECONOMY",
-      filters: fallback?.filters ?? {},
-      coverageMode: fallback?.coverageMode ?? "core",
-      redirectMode: fallback?.redirectMode ?? "best-effort",
-      currencyCode: fallback?.currencyCode ?? "USD",
-      locale: fallback?.locale ?? "es-PE",
-      market: fallback?.market ?? "PE",
-    };
-  } catch {
-    return exactCostamarRequestFromFallback(fallback);
-  }
-}
-
 function createProviderSearchStates(
   providerIds: ProviderId[],
   cachedJob?: SearchJobRecord,
@@ -2161,43 +2104,47 @@ function stripCachedMatrixCellQuotation(cell: MatrixCell): MatrixCell {
 function createProviderMatrixStates(
   request: SearchRequest,
   providerIds: ProviderId[],
-  cachedJob?: MatrixJobRecord,
 ): Map<ProviderId, ProviderMatrixState> {
-  const cachedCellsByProvider = new Map<ProviderId, Map<string, MatrixCell>>();
-
-  for (const cachedCell of cachedJob?.cells ?? []) {
-    if (!providerIds.includes(cachedCell.providerSource)) {
-      continue;
-    }
-    const providerCells = cachedCellsByProvider.get(cachedCell.providerSource) ?? new Map();
-    providerCells.set(cachedCell.key, stripCachedMatrixCellQuotation(cachedCell));
-    cachedCellsByProvider.set(cachedCell.providerSource, providerCells);
-  }
-
   return new Map<ProviderId, ProviderMatrixState>(providerIds.map((providerId) => {
     const adapter = getProgressiveAdapter(providerId);
     const response = adapter.createMatrixDraft(request, {
       exactProvider: providerId,
       coverageMode: request.coverageMode,
     });
-    const cachedCells = cachedCellsByProvider.get(providerId);
-    const cells = response.cells.map((cell) => cachedCells?.get(cell.key) ?? cell);
-    const seededResponse = { ...response, cells };
 
     return [providerId, {
-      response: seededResponse,
+      response,
       completed: false,
-      cellIndex: buildMatrixCellIndex(cells),
+      cellIndex: buildMatrixCellIndex(response.cells),
     }];
   }));
 }
 
-function searchJobResponse(
-  job: ReturnType<typeof getRuntime>["sessions"] extends { getSearchJob(jobId: string): infer T } ? NonNullable<T> : never,
-  sinceRevision?: number,
-) {
+/* A recent identical matrix answers while every cell is asked again: a cell
+   shows its cached value only until a provider has answered for it. */
+function cachedMatrixCellsByKey(cachedJob?: MatrixJobRecord): Map<string, MatrixCell> | undefined {
+  return cachedJob
+    ? new Map(cachedJob.cells.map((cell) => [cell.key, stripCachedMatrixCellQuotation(cell)] as const))
+    : undefined;
+}
+
+function overlayCachedMatrixCells(
+  response: MatrixResponse,
+  cachedCells?: ReadonlyMap<string, MatrixCell>,
+): MatrixResponse {
+  if (!cachedCells?.size) {
+    return response;
+  }
+
+  const cells = response.cells.map((cell) => (cell.confidence === "loading" ? cachedCells.get(cell.key) : undefined) ?? cell);
+  return { ...response, cells, confidenceSummary: buildMatrixConfidenceSummary(cells) };
+}
+
+/* The same bytes as `json()` of the whole answer, with the offers spliced in
+   from their cached serialization. */
+function searchJobResponse(job: SearchJobRecord, sinceRevision?: number): Response {
   const unchanged = typeof sinceRevision === "number" && sinceRevision >= job.revision;
-  const base = {
+  const base = JSON.stringify({
     searchJobId: job.id,
     searchComplete: job.status === "completed" || job.status === "failed" || job.status === "cancelled",
     searchStatus: job.status,
@@ -2209,19 +2156,18 @@ function searchJobResponse(
     warnings: job.warnings,
     providerDiagnostics: job.providerDiagnostics,
     error: job.error,
+    queued: job.queued === true,
     unchanged,
-  };
-
-  if (unchanged) {
-    return base;
-  }
-
-  return {
-    ...base,
-    offers: job.offers,
-    allOffers: job.allOffers,
-    scheduleGroups: buildOfferScheduleGroups(job.allOffers),
-  };
+  });
+  const body = unchanged
+    ? base
+    : job.allOffers.length >= LONG_OFFER_LIST
+      ? streamedOffersBody(base.slice(0, -1), job.allOffers)
+      : new Blob([base.slice(0, -1), ",", publicOffersJson(job.allOffers), "}"]);
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "application/json; charset=utf-8" },
+  });
 }
 
 function isSearchJobRunning(runtime: ReturnType<typeof getRuntime>, jobId: string): boolean {
@@ -2232,38 +2178,18 @@ function isMatrixJobRunning(runtime: ReturnType<typeof getRuntime>, jobId: strin
   return runtime.sessions.getMatrixJob(jobId)?.status === "running";
 }
 
-function searchAdmissionKindForRequest(request: SearchRequest): SearchAdmissionKind {
-  return request.searchMode === "exact" ? "exact" : "range";
-}
-
-function searchAdmissionErrorMessage(error: unknown): string {
-  if (error instanceof SearchAdmissionError) {
-    switch (error.code) {
-      case "queue-full":
-        return "La cola de busquedas esta llena. Intenta nuevamente en unos minutos.";
-      case "queue-timeout":
-        return "La busqueda espero demasiado por capacidad disponible.";
-      case "cancelled":
-        return "La busqueda fue cancelada antes de iniciar.";
+function failedProviderDiagnostics(entries: ProviderDiagnostics[] | undefined, message: string): ProviderDiagnostics[] {
+  return (entries ?? []).reduce((current, entry) => {
+    if (entry.status === "completed" || entry.status === "failed") {
+      return current;
     }
-  }
-
-  return "No se pudo iniciar la busqueda.";
-}
-
-function admissionFailedProviderDiagnostics(
-  entries: ProviderDiagnostics[] | undefined,
-  providerIds: ProviderId[],
-  message: string,
-): ProviderDiagnostics[] {
-  return providerIds.reduce((current, providerId) => {
     const withEvent = applyProviderDiagnosticEvent(
       current,
-      providerId,
-      { name: "admission_failed", detail: message, at: new Date().toISOString() },
+      entry.providerId,
+      { name: "failed", detail: message, at: new Date().toISOString() },
       "failed",
     );
-    return applyProviderDiagnosticSummary(withEvent, providerId, "failed", {
+    return applyProviderDiagnosticSummary(withEvent, entry.providerId, "failed", {
       offers: 0,
       warningCount: 1,
       error: message,
@@ -2271,49 +2197,40 @@ function admissionFailedProviderDiagnostics(
   }, cloneProviderDiagnosticsList(entries));
 }
 
-function failSearchJobForAdmission(
-  runtime: ReturnType<typeof getRuntime>,
-  jobId: string,
-  providerIds: ProviderId[],
-  error: unknown,
-): void {
-  const message = searchAdmissionErrorMessage(error);
-  runtime.sessions.updateSearchJob(jobId, (current) => {
-    if (current.status !== "running") {
-      return current;
-    }
+/* A job whose own code threw: it ends `failed`, with its providers still out
+   marked so, and keeps what it had found. */
+function failJob(runtime: ReturnType<typeof getRuntime>, kind: JobKind, jobId: string, message: string): void {
+  disposePendingProgressSync(kind, jobId, true);
+  if (kind === "search") {
+    runtime.sessions.updateSearchJob(jobId, (current) => {
+      if (current.status !== "running") {
+        return current;
+      }
 
-    const warnings = uniqueStrings([...current.warnings, message]);
-    return {
-      ...current,
-      status: "failed",
-      error: message,
-      warnings,
-      providerDiagnostics: admissionFailedProviderDiagnostics(current.providerDiagnostics, providerIds, message),
-      searchMeta: currentSearchMeta({
-        ...current.searchMeta,
-        completedAt: new Date().toISOString(),
-        warnings: uniqueStrings([...(current.searchMeta.warnings ?? []), message]),
-        partial: current.offers.length > 0 || current.allOffers.length > 0 || current.searchMeta.partial,
-        searchState: "search_failed",
-      }),
-    };
-  });
-}
+      const { queued: _queued, ...running } = current;
+      return {
+        ...running,
+        status: "failed",
+        error: message,
+        warnings: uniqueStrings([...current.warnings, message]),
+        providerDiagnostics: failedProviderDiagnostics(current.providerDiagnostics, message),
+        searchMeta: currentSearchMeta({
+          ...current.searchMeta,
+          completedAt: new Date().toISOString(),
+          warnings: uniqueStrings([...(current.searchMeta.warnings ?? []), message]),
+          partial: current.allOffers.length > 0 || current.searchMeta.partial,
+          searchState: "search_failed",
+        }),
+      };
+    });
+    return;
+  }
 
-function failMatrixJobForAdmission(
-  runtime: ReturnType<typeof getRuntime>,
-  jobId: string,
-  providerIds: ProviderId[],
-  error: unknown,
-): void {
-  const message = searchAdmissionErrorMessage(error);
   runtime.sessions.updateMatrixJob(jobId, (current) => {
     if (current.status !== "running") {
       return current;
     }
 
-    const warnings = uniqueStrings([...current.warnings, message]);
     const cells = current.cells.map((cell) => cell.confidence === "loading"
       ? {
           ...cell,
@@ -2323,14 +2240,15 @@ function failMatrixJobForAdmission(
           tooltip: message,
         }
       : cell);
+    const { queued: _queued, ...running } = current;
     return {
-      ...current,
+      ...running,
       status: "failed",
       error: message,
-      warnings,
+      warnings: uniqueStrings([...current.warnings, message]),
       cells,
       confidenceSummary: buildMatrixConfidenceSummary(cells),
-      providerDiagnostics: admissionFailedProviderDiagnostics(current.providerDiagnostics, providerIds, message),
+      providerDiagnostics: failedProviderDiagnostics(current.providerDiagnostics, message),
       searchMeta: currentSearchMeta({
         ...current.searchMeta,
         completedAt: new Date().toISOString(),
@@ -2348,27 +2266,17 @@ function shouldCachePartialCancellation(url: URL): boolean {
 
 function cancelSearchJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: string, url: URL): Response {
   const cachePartial = shouldCachePartialCancellation(url);
-  disposePendingProgressSync("search", jobId, cachePartial);
-  const job = runtime.sessions.cancelSearchJob(
-    jobId,
-    cachePartial ? SEARCH_REFRESH_CANCELLED_WARNING : SEARCH_CANCELLED_WARNING,
-    { cachePartial },
-  );
+  const job = stopJob(runtime, "search", jobId, cachePartial ? SEARCH_REFRESH_CANCELLED_WARNING : SEARCH_CANCELLED_WARNING, cachePartial);
   if (!job) {
     return json({ error: "Search job not found." }, { status: 404 });
   }
 
-  return json(searchJobResponse(job));
+  return searchJobResponse(job);
 }
 
 function cancelMatrixJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: string, url: URL): Response {
   const cachePartial = shouldCachePartialCancellation(url);
-  disposePendingProgressSync("matrix", jobId, cachePartial);
-  const job = runtime.sessions.cancelMatrixJob(
-    jobId,
-    cachePartial ? SEARCH_REFRESH_CANCELLED_WARNING : SEARCH_CANCELLED_WARNING,
-    { cachePartial },
-  );
+  const job = stopJob(runtime, "matrix", jobId, cachePartial ? SEARCH_REFRESH_CANCELLED_WARNING : SEARCH_CANCELLED_WARNING, cachePartial);
   if (!job) {
     return json({ error: "Matrix job not found." }, { status: 404 });
   }
@@ -2388,9 +2296,12 @@ function buildInitialProviderContext(
     return undefined;
   }
 
+  /* A job lives for hours and the branded token for one, renewed outside the
+     application. The job keeps no token, so each search it runs, a quote's
+     revalidation included, reads the one configured at that moment. */
   const costamarContext = normalizeCostamarProviderContext(payload?.providerConfig?.costamar);
   return {
-    costamar: costamarContext,
+    costamar: { ...costamarContext, token: "" },
   };
 }
 
@@ -2412,14 +2323,10 @@ function recordLocationUsageForSearchRequest(
 
 /* The unit that answers `GET /api/location-usage-suggestions` is the unit that
    has to count the search. In production the web unit hands `/api/search` and
-   `/api/matrix` to `fly-desk-search.service` (`FLY_DESK_SEARCH_SERVICE_URL`),
-   so every executed search used to be counted inside the runner — a different
-   process, writing a store the ranking is never read from unless two
-   environment variables happen to name the same file. The chips were global by
-   coincidence, not by construction, and that is what «una búsqueda bastaría
-   para agregar otro comodín» ran into. The web unit now counts the search as it
-   delegates it, and the runner ignores what arrives stamped as proxied, so an
-   executed search is counted exactly once and always where it is served. */
+   `/api/matrix` to `fly-desk-search.service` (`FLY_DESK_SEARCH_SERVICE_URL`), a
+   different process whose store the ranking does not read. So the web unit
+   counts the search as it delegates it, and the runner ignores what arrives
+   stamped as proxied: an executed search is counted once, where it is served. */
 function isDelegatedLocationUsageRoute(method: string, pathname: string): boolean {
   return method.toUpperCase() === "POST"
     && (pathname === "/api/search" || pathname === "/api/matrix");
@@ -2518,8 +2425,7 @@ async function handleSearchRequest(
   const job = runtime.sessions.createSearchJob({
     request: normalizedRequest,
     providerContext,
-    offers: draft.offers,
-    allOffers: draft.allOffers ?? draft.offers,
+    allOffers: draft.allOffers,
     searchMeta: draft.searchMeta,
     providerMeta: draft.providerMeta,
     warnings: draft.warnings,
@@ -2532,7 +2438,7 @@ async function handleSearchRequest(
     mode: normalizedRequest.searchMode,
     providers: providerIds.join(","),
     cached: Boolean(cacheSeedJob),
-    offers: job.offers.length,
+    offers: job.allOffers.length,
   });
   const quotationRateResolver = createSharedQuotationRateResolver();
   let lastPersistedSearchProgressCount = 0;
@@ -2544,7 +2450,7 @@ async function handleSearchRequest(
       providerIds,
       providerStates,
     );
-    const progressCount = (materialized.allOffers ?? materialized.offers).length;
+    const progressCount = materialized.allOffers.length;
     const persist = status === "completed"
       || shouldPersistProgressSnapshot(lastPersistedSearchProgressCount, progressCount);
     if (status === "running" && persist) {
@@ -2557,8 +2463,7 @@ async function handleSearchRequest(
       }
       return {
         ...current,
-        offers: materialized.offers,
-        allOffers: materialized.allOffers ?? materialized.offers,
+        allOffers: materialized.allOffers,
         searchMeta: currentSearchMeta({
           ...materialized.searchMeta,
           requestedAt: current.searchMeta.requestedAt,
@@ -2582,209 +2487,208 @@ async function handleSearchRequest(
     });
     registerPendingProgressSync("search", job.id, searchProgressSync);
     const syncSearchProgress = searchProgressSync.mark;
-    scheduleBackgroundSearchJob(() => {
-      void runtime.searchAdmission.run(
-        {
-          kind: searchAdmissionKindForRequest(normalizedRequest),
-          jobId: job.id,
-          shouldContinue: () => isSearchJobRunning(runtime, job.id),
-        },
-        async () => {
-          if (!isSearchJobRunning(runtime, job.id)) {
-            disposePendingProgressSync("search", job.id);
-            return;
-          }
-
-          const failedProviderIds = new Set<ProviderId>();
-          const resolvers = providerIds.map(async (providerId) => {
-            const providerStart = startPerfTimer();
-            const providerDiagnosticSeed = providerDiagnostics.find((entry) => entry.providerId === providerId);
-            const recordProviderEvent = (
-              event: ProviderDiagnosticEvent | string,
-              status: ProviderDiagnostics["status"] = "running",
-            ) => {
-              runtime.sessions.updateSearchJob(job.id, (current) => ({
-                ...current,
-                providerDiagnostics: applyProviderDiagnosticEvent(
-                  current.providerDiagnostics,
-                  providerId,
-                  event,
-                  status,
-                ),
-              }));
-            };
-            const recordProviderSummary = (
-              status: ProviderDiagnostics["status"],
-              summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "error">,
-            ) => {
-              runtime.sessions.updateSearchJob(job.id, (current) => ({
-                ...current,
-                providerDiagnostics: applyProviderDiagnosticSummary(
-                  current.providerDiagnostics,
-                  providerId,
-                  status,
-                  summary,
-                ),
-              }));
-            };
-            let firstProgressReported = false;
-            const onProgress = (partialResult: ProviderSearchResult) => {
-              if (!isSearchJobRunning(runtime, job.id)) {
-                return false;
-              }
-
-              if (!firstProgressReported) {
-                firstProgressReported = true;
-                recordProviderEvent("first_progress");
-              }
-
-              providerStates.set(
-                providerId,
-                mergeProviderSearchProgress(providerStates.get(providerId), partialResult),
-              );
-              startQuotationRateResolution(
-                normalizedRequest,
-                partialResult.offers,
-                quotationRateResolver,
-              );
-              syncSearchProgress();
-              return isSearchJobRunning(runtime, job.id);
-            };
-
-            try {
-              if (!isSearchJobRunning(runtime, job.id)) {
-                return;
-              }
-
-              runtime.providerStatus.markChecking(providerId, "search");
-              if (shouldUseSearchWorkerProcesses()) {
-                recordProviderEvent("worker_spawned");
-              }
-
-              const result = await resolveProviderSearchProgressive(
-                providerId,
-                normalizedRequest,
-                providerContext,
-                onProgress,
-                providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
-                (event) => recordProviderEvent(event),
-                () => isSearchJobRunning(runtime, job.id),
-              );
-              if (!isSearchJobRunning(runtime, job.id)) {
-                return;
-              }
-
-              providerStates.set(providerId, {
-                offers: result.offers,
-                warnings: result.warnings,
-                partial: result.partial,
-                completed: true,
-                fresh: true,
-              });
-              runtime.providerStatus.recordSearchResult(providerId, result.partial);
-              startQuotationRateResolution(
-                normalizedRequest,
-                providerIds.flatMap((id) => providerStates.get(id)?.offers ?? []),
-                quotationRateResolver,
-              );
-              logPerfSpan("search.provider", providerStart, {
-                jobId: job.id,
-                providerId,
-                status: "completed",
-                offers: result.offers.length,
-                partial: result.partial,
-              });
-              recordProviderEvent("completed", "completed");
-              recordProviderSummary("completed", {
-                offers: result.offers.length,
-                warningCount: result.warnings.length,
-              });
-              syncSearchProgress();
-            } catch (error) {
-              if (!isSearchJobRunning(runtime, job.id)) {
-                return;
-              }
-
-              runtime.providerStatus.recordSearchFailure(providerId, error);
-              const partialState = providerStates.get(providerId);
-              const errorMessage = providerPublicFailureMessage(providerId, error);
-              providerStates.set(providerId, {
-                offers: partialState?.fresh ? partialState.offers : [],
-                warnings: uniqueStrings([
-                  ...(partialState?.fresh ? partialState.warnings : []),
-                  errorMessage,
-                ]),
-                partial: true,
-                completed: true,
-                fresh: true,
-              });
-              failedProviderIds.add(providerId);
-              recordProviderEvent("failed", "failed");
-              recordProviderSummary("failed", {
-                offers: 0,
-                warningCount: 1,
-                error: errorMessage,
-              });
-              logPerfSpan("search.provider", providerStart, {
-                jobId: job.id,
-                providerId,
-                status: "failed",
-                error: error instanceof Error ? error.name : "Error",
-              });
-              syncSearchProgress();
-            }
-          });
-
-          const settled = await Promise.allSettled(resolvers);
-          if (!isSearchJobRunning(runtime, job.id)) {
-            disposePendingProgressSync("search", job.id);
-            logPerfSpan("search.job", requestStart, {
-              jobId: job.id,
-              status: runtime.sessions.getSearchJob(job.id)?.status ?? "missing",
-              providers: providerIds.join(","),
-            });
-            return;
-          }
-
-          const sourceOffers = providerIds.flatMap((providerId) => providerStates.get(providerId)?.offers ?? []);
-          const readyOffers = await resolveQuotationReadyOffers(normalizedRequest, sourceOffers, quotationRateResolver);
-          const readyBySource = new Map(sourceOffers.map((offer, index) => [offer, readyOffers[index]]));
-          providerIds.forEach((providerId) => {
-            const state = providerStates.get(providerId);
-            if (state) {
-              state.offers = state.offers.map((offer) => readyBySource.get(offer) ?? offer);
-            }
-          });
-          if (!isSearchJobRunning(runtime, job.id)) {
-            disposePendingProgressSync("search", job.id);
-            return;
-          }
-
+    admitAndRunJob(
+      runtime,
+      { kind: "search", id: job.id },
+      { ...searchAdmissionFor(normalizedRequest), sessionKey: searchSessionKey(request) },
+      cacheSeedJob ? cachedBackgroundSearchStartDelayMs() : backgroundSearchStartDelayMs(),
+      async (signal) => {
+        if (!isSearchJobRunning(runtime, job.id)) {
           disposePendingProgressSync("search", job.id);
-          const materialized = syncSearchJob("completed");
+          return;
+        }
+
+        const failedProviderIds = new Set<ProviderId>();
+        const resolvers = providerIds.map(async (providerId) => {
+          const providerStart = startPerfTimer();
+          const providerDiagnosticSeed = providerDiagnostics.find((entry) => entry.providerId === providerId);
+          const recordProviderEvent = (
+            event: ProviderDiagnosticEvent | string,
+            status: ProviderDiagnostics["status"] = "running",
+          ) => {
+            runtime.sessions.updateSearchJob(job.id, (current) => ({
+              ...current,
+              providerDiagnostics: applyProviderDiagnosticEvent(
+                current.providerDiagnostics,
+                providerId,
+                event,
+                status,
+              ),
+            }));
+          };
+          const recordProviderSummary = (
+            status: ProviderDiagnostics["status"],
+            summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "partial" | "error">,
+          ) => {
+            runtime.sessions.updateSearchJob(job.id, (current) => ({
+              ...current,
+              providerDiagnostics: applyProviderDiagnosticSummary(
+                current.providerDiagnostics,
+                providerId,
+                status,
+                summary,
+              ),
+            }));
+          };
+          let firstProgressReported = false;
+          const onProgress = (partialResult: ProviderSearchResult) => {
+            if (!isSearchJobRunning(runtime, job.id)) {
+              return false;
+            }
+
+            if (!firstProgressReported) {
+              firstProgressReported = true;
+              recordProviderEvent("first_progress");
+            }
+
+            providerStates.set(
+              providerId,
+              mergeProviderSearchProgress(providerStates.get(providerId), partialResult),
+            );
+            startQuotationRateResolution(
+              normalizedRequest,
+              partialResult.offers,
+              quotationRateResolver,
+            );
+            syncSearchProgress();
+            return isSearchJobRunning(runtime, job.id);
+          };
+
+          try {
+            if (!isSearchJobRunning(runtime, job.id)) {
+              return;
+            }
+
+            runtime.providerStatus.markChecking(providerId, "search");
+            if (shouldUseSearchWorkerProcesses()) {
+              recordProviderEvent("worker_spawned");
+            }
+
+            const result = await resolveProviderSearchProgressive(
+              providerId,
+              normalizedRequest,
+              providerContext,
+              onProgress,
+              providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
+              (event) => recordProviderEvent(event),
+              () => isSearchJobRunning(runtime, job.id),
+              signal,
+            );
+            if (!isSearchJobRunning(runtime, job.id)) {
+              return;
+            }
+
+            providerStates.set(providerId, {
+              offers: result.offers,
+              warnings: result.warnings,
+              partial: result.partial,
+              completed: true,
+              fresh: true,
+            });
+            runtime.providerStatus.recordSearchResult(providerId, result.partial);
+            startQuotationRateResolution(
+              normalizedRequest,
+              providerIds.flatMap((id) => providerStates.get(id)?.offers ?? []),
+              quotationRateResolver,
+            );
+            logPerfSpan("search.provider", providerStart, {
+              jobId: job.id,
+              providerId,
+              status: "completed",
+              offers: result.offers.length,
+              partial: result.partial,
+            });
+            recordProviderEvent("completed", "completed");
+            /* A provider that completes partial left a day or a GDS out: its
+               list is real but short, and the desk names it for that. */
+            recordProviderSummary("completed", {
+              offers: result.offers.length,
+              warningCount: result.warnings.length,
+              partial: result.partial,
+            });
+            syncSearchProgress();
+          } catch (error) {
+            if (!isSearchJobRunning(runtime, job.id)) {
+              return;
+            }
+
+            runtime.providerStatus.recordSearchFailure(providerId, error);
+            const partialState = providerStates.get(providerId);
+            const errorMessage = providerPublicFailureMessage(providerId, error);
+            providerStates.set(providerId, {
+              offers: partialState?.fresh ? partialState.offers : [],
+              warnings: uniqueStrings([
+                ...(partialState?.fresh ? partialState.warnings : []),
+                errorMessage,
+              ]),
+              partial: true,
+              completed: true,
+              fresh: true,
+            });
+            failedProviderIds.add(providerId);
+            recordProviderEvent("failed", "failed");
+            recordProviderSummary("failed", {
+              offers: 0,
+              warningCount: 1,
+              error: errorMessage,
+            });
+            logPerfSpan("search.provider", providerStart, {
+              jobId: job.id,
+              providerId,
+              status: "failed",
+              error: error instanceof Error ? error.name : "Error",
+            });
+            syncSearchProgress();
+          }
+        });
+
+        const settled = await Promise.allSettled(resolvers);
+        if (!isSearchJobRunning(runtime, job.id)) {
+          disposePendingProgressSync("search", job.id);
           logPerfSpan("search.job", requestStart, {
             jobId: job.id,
-            status: "completed",
+            status: runtime.sessions.getSearchJob(job.id)?.status ?? "missing",
             providers: providerIds.join(","),
-            failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
-            offers: materialized.offers.length,
-            partial: materialized.searchMeta.partial,
           });
-        },
-      ).catch((error) => {
-        disposePendingProgressSync("search", job.id, true);
-        failSearchJobForAdmission(runtime, job.id, providerIds, error);
+          return;
+        }
+
+        const sourceOffers = providerIds.flatMap((providerId) => providerStates.get(providerId)?.offers ?? []);
+        const readyOffers = await resolveQuotationReadyOffers(normalizedRequest, sourceOffers, quotationRateResolver);
+        const readyBySource = new Map(sourceOffers.map((offer, index) => [offer, readyOffers[index]]));
+        providerIds.forEach((providerId) => {
+          const state = providerStates.get(providerId);
+          if (state) {
+            state.offers = state.offers.map((offer) => readyBySource.get(offer) ?? offer);
+          }
+        });
+        if (!isSearchJobRunning(runtime, job.id)) {
+          disposePendingProgressSync("search", job.id);
+          return;
+        }
+
+        disposePendingProgressSync("search", job.id);
+        const materialized = syncSearchJob("completed");
+        /* A long list leaves behind the copies it was built from. Collected now,
+           before its answer and its row are written, they do not stack on the
+           completion of a month of a sweep. */
+        if (materialized.allOffers.length >= LONG_OFFER_LIST) {
+          Bun.gc(true);
+        }
         logPerfSpan("search.job", requestStart, {
           jobId: job.id,
-          status: runtime.sessions.getSearchJob(job.id)?.status ?? "missing",
+          status: "completed",
           providers: providerIds.join(","),
-          admissionError: error instanceof Error ? error.name : "Error",
+          failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
+          offers: materialized.allOffers.length,
+          partial: materialized.searchMeta.partial,
         });
-      });
-    }, cacheSeedJob ? cachedBackgroundSearchStartDelayMs() : backgroundSearchStartDelayMs());
+      },
+    );
   }
 
-  return json(searchJobResponse(job));
+  /* Read again: admission may have marked it queued. */
+  return searchJobResponse(runtime.sessions.getSearchJob(job.id) ?? job);
 }
 
 async function handleMatrixRequest(
@@ -2817,11 +2721,11 @@ async function handleMatrixRequest(
     providerIds,
     maxAgeMs: SEARCH_REVALIDATION_CACHE_TTL_MS,
   });
-  const providerStates = createProviderMatrixStates(normalizedRequest, providerIds, cachedJob);
-  const materializedDraft = materializeAggregatedMatrixResponse(
-    normalizedRequest,
-    providerIds,
-    providerStates,
+  const providerStates = createProviderMatrixStates(normalizedRequest, providerIds);
+  const cachedCells = cachedMatrixCellsByKey(cachedJob);
+  const materializedDraft = overlayCachedMatrixCells(
+    materializeAggregatedMatrixResponse(normalizedRequest, providerIds, providerStates),
+    cachedCells,
   );
   const draft = cachedJob
     ? createCachedMatrixDraftResponse(materializedDraft, providerIds, cachedJob)
@@ -2850,12 +2754,9 @@ async function handleMatrixRequest(
   let lastPersistedMatrixProgressCount = 0;
 
   const syncMatrixJob = (status: "running" | "completed") => {
-    const materialized = materializeAggregatedMatrixResponse(
-      normalizedRequest,
-      providerIds,
-      providerStates,
-    );
-    const progressCount = materialized.cells.filter((cell) => cell.confidence !== "loading").length;
+    const fresh = materializeAggregatedMatrixResponse(normalizedRequest, providerIds, providerStates);
+    const progressCount = fresh.cells.filter((cell) => cell.confidence !== "loading").length;
+    const materialized = overlayCachedMatrixCells(fresh, cachedCells);
     const persist = status === "completed"
       || shouldPersistProgressSnapshot(lastPersistedMatrixProgressCount, progressCount);
     if (status === "running" && persist) {
@@ -2895,224 +2796,215 @@ async function handleMatrixRequest(
     });
     registerPendingProgressSync("matrix", job.id, matrixProgressSync);
     const syncMatrixProgress = matrixProgressSync.mark;
-    scheduleBackgroundSearchJob(() => {
-      void runtime.searchAdmission.run(
-        {
-          kind: "matrix",
-          jobId: job.id,
-          shouldContinue: () => isMatrixJobRunning(runtime, job.id),
-        },
-        async () => {
-          if (!isMatrixJobRunning(runtime, job.id)) {
-            disposePendingProgressSync("matrix", job.id);
-            return;
+    admitAndRunJob(
+      runtime,
+      { kind: "matrix", id: job.id },
+      { kind: "matrix", sessionKey: searchSessionKey(request) },
+      cachedJob ? cachedBackgroundSearchStartDelayMs() : backgroundSearchStartDelayMs(),
+      async (signal) => {
+        if (!isMatrixJobRunning(runtime, job.id)) {
+          disposePendingProgressSync("matrix", job.id);
+          return;
+        }
+
+        const failedProviderIds = new Set<ProviderId>();
+        const resolvers = providerIds.map(async (providerId) => {
+          const providerStart = startPerfTimer();
+          const providerDiagnosticSeed = providerDiagnostics.find((entry) => entry.providerId === providerId);
+          const recordProviderEvent = (
+            event: ProviderDiagnosticEvent | string,
+            status: ProviderDiagnostics["status"] = "running",
+          ) => {
+            runtime.sessions.updateMatrixJob(job.id, (current) => ({
+              ...current,
+              providerDiagnostics: applyProviderDiagnosticEvent(
+                current.providerDiagnostics,
+                providerId,
+                event,
+                status,
+              ),
+            }));
+          };
+          const recordProviderSummary = (
+            status: ProviderDiagnostics["status"],
+            summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "partial" | "error">,
+          ) => {
+            runtime.sessions.updateMatrixJob(job.id, (current) => ({
+              ...current,
+              providerDiagnostics: applyProviderDiagnosticSummary(
+                current.providerDiagnostics,
+                providerId,
+                status,
+                summary,
+              ),
+            }));
+          };
+          let firstProgressReported = false;
+          const adapter = getProgressiveAdapter(providerId);
+          const currentState = providerStates.get(providerId);
+          const draftResponse = currentState?.response ?? adapter.createMatrixDraft(normalizedRequest, {
+            exactProvider: providerId,
+            coverageMode: normalizedRequest.coverageMode,
+          });
+
+          try {
+            if (!isMatrixJobRunning(runtime, job.id)) {
+              return;
+            }
+
+            runtime.providerStatus.markChecking(providerId, "search");
+            if (shouldUseSearchWorkerProcesses()) {
+              recordProviderEvent("worker_spawned");
+            }
+
+            const result = await resolveProviderMatrixProgressive(
+              providerId,
+              normalizedRequest,
+              providerContext,
+              draftResponse,
+              (cell) => {
+                if (!isMatrixJobRunning(runtime, job.id)) {
+                  return false;
+                }
+
+                if (!firstProgressReported) {
+                  firstProgressReported = true;
+                  recordProviderEvent("first_progress");
+                }
+
+                const providerState = providerStates.get(providerId);
+                if (!providerState) {
+                  return false;
+                }
+
+                updateMatrixDraftCell(providerState.response, cell, providerState.cellIndex);
+                providerState.completed = false;
+                startQuotationRateResolution(
+                  normalizedRequest,
+                  cell.offer ? [cell.offer] : [],
+                  quotationRateResolver,
+                );
+                syncMatrixProgress();
+                return isMatrixJobRunning(runtime, job.id);
+              },
+              providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
+              (event) => recordProviderEvent(event),
+              () => isMatrixJobRunning(runtime, job.id),
+              signal,
+            );
+            if (!isMatrixJobRunning(runtime, job.id)) {
+              return;
+            }
+
+            providerStates.set(providerId, {
+              response: result,
+              completed: true,
+              cellIndex: buildMatrixCellIndex(result.cells),
+            });
+            runtime.providerStatus.recordSearchResult(
+              providerId,
+              result.searchMeta.partial,
+            );
+            startQuotationRateResolution(
+              normalizedRequest,
+              providerIds.flatMap((id) =>
+                providerStates.get(id)?.response.cells.flatMap((entry) => entry.offer ? [entry.offer] : []) ?? []
+              ),
+              quotationRateResolver,
+            );
+            logPerfSpan("matrix.provider", providerStart, {
+              jobId: job.id,
+              providerId,
+              status: "completed",
+              cells: result.cells.length,
+              partial: result.searchMeta.partial,
+            });
+            recordProviderEvent("completed", "completed");
+            recordProviderSummary("completed", {
+              offers: result.cells.filter((cell) => typeof cell.price?.amount === "number").length,
+              warningCount: result.warnings.length,
+              partial: result.searchMeta.partial,
+            });
+          } catch (error) {
+            if (!isMatrixJobRunning(runtime, job.id)) {
+              return;
+            }
+
+            runtime.providerStatus.recordSearchFailure(providerId, error);
+            const partialState = providerStates.get(providerId);
+            const partialResponse = partialState?.response ?? draftResponse;
+            const errorMessage = providerPublicFailureMessage(providerId, error);
+            const failedResponse = materializeFailedMatrixResponse(partialResponse, errorMessage);
+            providerStates.set(providerId, {
+              response: failedResponse,
+              completed: true,
+              cellIndex: partialState?.cellIndex ?? buildMatrixCellIndex(failedResponse.cells),
+            });
+            failedProviderIds.add(providerId);
+            recordProviderEvent("failed", "failed");
+            recordProviderSummary("failed", {
+              offers: 0,
+              warningCount: 1,
+              error: errorMessage,
+            });
+            logPerfSpan("matrix.provider", providerStart, {
+              jobId: job.id,
+              providerId,
+              status: "failed",
+              error: error instanceof Error ? error.name : "Error",
+            });
           }
 
-          const failedProviderIds = new Set<ProviderId>();
-          const resolvers = providerIds.map(async (providerId) => {
-        const providerStart = startPerfTimer();
-        const providerDiagnosticSeed = providerDiagnostics.find((entry) => entry.providerId === providerId);
-        const recordProviderEvent = (
-          event: ProviderDiagnosticEvent | string,
-          status: ProviderDiagnostics["status"] = "running",
-        ) => {
-          runtime.sessions.updateMatrixJob(job.id, (current) => ({
-            ...current,
-            providerDiagnostics: applyProviderDiagnosticEvent(
-              current.providerDiagnostics,
-              providerId,
-              event,
-              status,
-            ),
-          }));
-        };
-        const recordProviderSummary = (
-          status: ProviderDiagnostics["status"],
-          summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "error">,
-        ) => {
-          runtime.sessions.updateMatrixJob(job.id, (current) => ({
-            ...current,
-            providerDiagnostics: applyProviderDiagnosticSummary(
-              current.providerDiagnostics,
-              providerId,
-              status,
-              summary,
-            ),
-          }));
-        };
-        let firstProgressReported = false;
-        const adapter = getProgressiveAdapter(providerId);
-        const currentState = providerStates.get(providerId);
-        const draftResponse = currentState?.response ?? adapter.createMatrixDraft(normalizedRequest, {
-          exactProvider: providerId,
-          coverageMode: normalizedRequest.coverageMode,
+          if (isMatrixJobRunning(runtime, job.id)) {
+            syncMatrixProgress();
+          }
         });
 
-        try {
-          if (!isMatrixJobRunning(runtime, job.id)) {
-            return;
-          }
-
-          runtime.providerStatus.markChecking(providerId, "search");
-          if (shouldUseSearchWorkerProcesses()) {
-            recordProviderEvent("worker_spawned");
-          }
-
-          const result = await resolveProviderMatrixProgressive(
-            providerId,
-            normalizedRequest,
-            providerContext,
-            draftResponse,
-            (cell) => {
-              if (!isMatrixJobRunning(runtime, job.id)) {
-                return false;
-              }
-
-              if (!firstProgressReported) {
-                firstProgressReported = true;
-                recordProviderEvent("first_progress");
-              }
-
-              const providerState = providerStates.get(providerId);
-              if (!providerState) {
-                return false;
-              }
-
-              updateMatrixDraftCell(providerState.response, cell, providerState.cellIndex);
-              providerState.completed = false;
-              startQuotationRateResolution(
-                normalizedRequest,
-                cell.offer ? [cell.offer] : [],
-                quotationRateResolver,
-              );
-              syncMatrixProgress();
-              return isMatrixJobRunning(runtime, job.id);
-            },
-            providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
-            (event) => recordProviderEvent(event),
-            () => isMatrixJobRunning(runtime, job.id),
-          );
-          if (!isMatrixJobRunning(runtime, job.id)) {
-            return;
-          }
-
-          providerStates.set(providerId, {
-            response: result,
-            completed: true,
-            cellIndex: buildMatrixCellIndex(result.cells),
-          });
-          runtime.providerStatus.recordSearchResult(
-            providerId,
-            result.searchMeta.partial,
-          );
-          startQuotationRateResolution(
-            normalizedRequest,
-            providerIds.flatMap((id) =>
-              providerStates.get(id)?.response.cells.flatMap((entry) => entry.offer ? [entry.offer] : []) ?? []
-            ),
-            quotationRateResolver,
-          );
-          logPerfSpan("matrix.provider", providerStart, {
-            jobId: job.id,
-            providerId,
-            status: "completed",
-            cells: result.cells.length,
-            partial: result.searchMeta.partial,
-          });
-          recordProviderEvent("completed", "completed");
-          recordProviderSummary("completed", {
-            offers: result.cells.filter((cell) => typeof cell.price?.amount === "number").length,
-            warningCount: result.warnings.length,
-          });
-        } catch (error) {
-          if (!isMatrixJobRunning(runtime, job.id)) {
-            return;
-          }
-
-          runtime.providerStatus.recordSearchFailure(providerId, error);
-          const partialState = providerStates.get(providerId);
-          const partialResponse = partialState?.response ?? draftResponse;
-          const errorMessage = providerPublicFailureMessage(providerId, error);
-          const failedResponse = materializeFailedMatrixResponse(partialResponse, errorMessage);
-          providerStates.set(providerId, {
-            response: failedResponse,
-            completed: true,
-            cellIndex: partialState?.cellIndex ?? buildMatrixCellIndex(failedResponse.cells),
-          });
-          failedProviderIds.add(providerId);
-          recordProviderEvent("failed", "failed");
-          recordProviderSummary("failed", {
-            offers: 0,
-            warningCount: 1,
-            error: errorMessage,
-          });
-          logPerfSpan("matrix.provider", providerStart, {
-            jobId: job.id,
-            providerId,
-            status: "failed",
-            error: error instanceof Error ? error.name : "Error",
-          });
-        }
-
-        if (isMatrixJobRunning(runtime, job.id)) {
-          syncMatrixProgress();
-        }
-      });
-
-          const settled = await Promise.allSettled(resolvers);
-          if (!isMatrixJobRunning(runtime, job.id)) {
-            disposePendingProgressSync("matrix", job.id);
-            logPerfSpan("matrix.job", requestStart, {
-              jobId: job.id,
-              status: runtime.sessions.getMatrixJob(job.id)?.status ?? "missing",
-              providers: providerIds.join(","),
-            });
-            return;
-          }
-
-          const sourceOffers = providerIds.flatMap((providerId) =>
-            providerStates.get(providerId)?.response.cells.flatMap((cell) => cell.offer ? [cell.offer] : []) ?? []
-          );
-          const readyOffers = await resolveQuotationReadyOffers(normalizedRequest, sourceOffers, quotationRateResolver);
-          const readyBySource = new Map(sourceOffers.map((offer, index) => [offer, readyOffers[index]]));
-          providerIds.forEach((providerId) => {
-            const state = providerStates.get(providerId);
-            if (state) {
-              state.response.cells = state.response.cells.map((cell) => cell.offer
-                ? { ...cell, offer: readyBySource.get(cell.offer) ?? cell.offer }
-                : cell);
-            }
-          });
-          if (!isMatrixJobRunning(runtime, job.id)) {
-            disposePendingProgressSync("matrix", job.id);
-            return;
-          }
-
+        const settled = await Promise.allSettled(resolvers);
+        if (!isMatrixJobRunning(runtime, job.id)) {
           disposePendingProgressSync("matrix", job.id);
-          const materialized = syncMatrixJob("completed");
           logPerfSpan("matrix.job", requestStart, {
             jobId: job.id,
-            status: "completed",
+            status: runtime.sessions.getMatrixJob(job.id)?.status ?? "missing",
             providers: providerIds.join(","),
-            failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
-            cells: materialized.cells.length,
-            partial: materialized.searchMeta.partial,
           });
-        },
-      ).catch((error) => {
-        disposePendingProgressSync("matrix", job.id, true);
-        failMatrixJobForAdmission(runtime, job.id, providerIds, error);
+          return;
+        }
+
+        const sourceOffers = providerIds.flatMap((providerId) =>
+          providerStates.get(providerId)?.response.cells.flatMap((cell) => cell.offer ? [cell.offer] : []) ?? []
+        );
+        const readyOffers = await resolveQuotationReadyOffers(normalizedRequest, sourceOffers, quotationRateResolver);
+        const readyBySource = new Map(sourceOffers.map((offer, index) => [offer, readyOffers[index]]));
+        providerIds.forEach((providerId) => {
+          const state = providerStates.get(providerId);
+          if (state) {
+            state.response.cells = state.response.cells.map((cell) => cell.offer
+              ? { ...cell, offer: readyBySource.get(cell.offer) ?? cell.offer }
+              : cell);
+          }
+        });
+        if (!isMatrixJobRunning(runtime, job.id)) {
+          disposePendingProgressSync("matrix", job.id);
+          return;
+        }
+
+        disposePendingProgressSync("matrix", job.id);
+        const materialized = syncMatrixJob("completed");
         logPerfSpan("matrix.job", requestStart, {
           jobId: job.id,
-          status: runtime.sessions.getMatrixJob(job.id)?.status ?? "missing",
+          status: "completed",
           providers: providerIds.join(","),
-          admissionError: error instanceof Error ? error.name : "Error",
+          failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
+          cells: materialized.cells.length,
+          partial: materialized.searchMeta.partial,
         });
-      });
-    }, cachedJob ? cachedBackgroundSearchStartDelayMs() : backgroundSearchStartDelayMs());
+      },
+    );
   }
 
-  return json(matrixJobResponse(job));
+  /* Read again: admission may have marked it queued. */
+  return json(matrixJobResponse(runtime.sessions.getMatrixJob(job.id) ?? job));
 }
 
 /* The routes that write the session cookie themselves. Renewal has to keep its
@@ -3123,6 +3015,12 @@ const SESSION_WRITING_PATHS = new Set([
   "/logout",
   "/api/auth/login",
   "/api/auth/logout",
+]);
+
+/* What an open page asks on its own, with nobody at it: a desk left open is
+   not somebody working, so these never slide the session. */
+const PASSIVE_PATHS = new Set([
+  "/api/search-capacity",
 ]);
 
 function alreadyWritesWebSessionCookie(response: Response): boolean {
@@ -3136,12 +3034,12 @@ function alreadyWritesWebSessionCookie(response: Response): boolean {
  * Every authenticated call through here is a sign that somebody is working, and
  * that is what a sliding session is measured in. `renewWebSessionCookies` holds
  * the policy — it returns nothing until the window is more than half spent, so
- * the ordinary response carries no `Set-Cookie` at all and stays as cacheable
- * as it was.
+ * the ordinary response carries no `Set-Cookie` at all and stays cacheable.
  */
 export async function routeRequest(request: Request): Promise<Response> {
   const response = await routeApplicationRequest(request);
-  if (SESSION_WRITING_PATHS.has(new URL(request.url).pathname)) {
+  const { pathname } = new URL(request.url);
+  if (SESSION_WRITING_PATHS.has(pathname) || PASSIVE_PATHS.has(pathname)) {
     return response;
   }
 
@@ -3207,8 +3105,8 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
   const runtime = getRuntime();
 
   if (request.method === "GET" && url.pathname === "/api/diagnostics") {
-    if (!isTrustedLocalRequest(request)) {
-      return json({ error: "This diagnostic endpoint is only available on localhost." }, { status: 403 });
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
     }
 
     return json({
@@ -3253,18 +3151,6 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
       },
       { headers: { "Cache-Control": "no-store" } },
     );
-  }
-
-  if (request.method === "GET" && url.pathname === "/api/costamar/token-status") {
-    if (!isTrustedLocalRequest(request)) {
-      return json({ error: "This Click and Book Plus token endpoint is only available on localhost." }, { status: 403 });
-    }
-
-    const status = getCostamarTokenStatus();
-    const verify = url.searchParams.get("verify") === "true";
-    const verification = verify ? await verifyCostamarTokenLive() : undefined;
-    const lastWarmup = getLastCostamarWarmupDiagnostics();
-    return json({ ...status, verification, lastWarmup });
   }
 
   if (request.method === "GET" && url.pathname === "/api/locations") {
@@ -3350,30 +3236,19 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
     );
   }
 
-  if (request.method === "POST" && url.pathname === "/api/local/open-url") {
-    if (!isTrustedLocalRequest(request)) {
-      return json({ error: "This local browser action is only available on localhost." }, { status: 403 });
+  /*
+   * The shared capacity, for the desk's indicator: answered at once when its
+   * version is not the caller's, otherwise held until it changes or the wait
+   * runs out, whichever is first.
+   */
+  if (request.method === "GET" && url.pathname === "/api/search-capacity") {
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
     }
 
-    const payload = await readPayload<LocalOpenPayload>(request);
-    const targetUrl = validateLocalOpenUrl(stringValue(payload.url));
-    if (!targetUrl) {
-      return json({ error: "Unsupported URL for local browser launch." }, { status: 400 });
-    }
-
-    const preferredBrowser = payload.preferredBrowser === "default" ? "default" : "chrome";
-    const launcher = await localOpenUrlOpener(
-      targetUrl.toString(),
-      preferredBrowser,
-      preferredBrowser === "chrome" ? resolveAgilChromeLaunchOptions() : undefined,
-    );
-
-    return json({
-      ok: true,
-      localOnly: true,
-      launcher: launcher.launcher,
-      url: targetUrl.toString(),
-    });
+    const waitMs = parseJobPollWaitMs(url.searchParams.get("wait"), CAPACITY_POLL_MAX_WAIT_MS);
+    await runtime.searchAdmission.waitForChange(url.searchParams.get("version") ?? undefined, waitMs, request.signal);
+    return json(runtime.searchAdmission.snapshot(), { headers: { "Cache-Control": "no-store" } });
   }
 
   if (request.method === "POST" && url.pathname === "/api/search") {
@@ -3402,7 +3277,7 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
     const sinceRevision = parseSinceRevision(url.searchParams.get("sinceRevision"));
     const waitMs = parseJobPollWaitMs(url.searchParams.get("wait"));
     if (waitMs > 0 && typeof sinceRevision === "number") {
-      await runtime.sessions.waitForSearchJobChange(jobId, sinceRevision, waitMs);
+      await followLiveJob("search", jobId, () => runtime.sessions.waitForSearchJobChange(jobId, sinceRevision, waitMs));
     }
 
     const job = runtime.sessions.getSearchJob(jobId);
@@ -3411,7 +3286,7 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
       return json({ error: "Search job not found." }, { status: 404 });
     }
 
-    return json(searchJobResponse(job, sinceRevision));
+    return searchJobResponse(job, sinceRevision);
   }
 
   if (request.method === "POST" && url.pathname === "/api/matrix") {
@@ -3440,7 +3315,7 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
     const sinceRevision = parseSinceRevision(url.searchParams.get("sinceRevision"));
     const waitMs = parseJobPollWaitMs(url.searchParams.get("wait"));
     if (waitMs > 0 && typeof sinceRevision === "number") {
-      await runtime.sessions.waitForMatrixJobChange(jobId, sinceRevision, waitMs);
+      await followLiveJob("matrix", jobId, () => runtime.sessions.waitForMatrixJobChange(jobId, sinceRevision, waitMs));
     }
 
     const job = runtime.sessions.getMatrixJob(jobId);
@@ -3450,100 +3325,6 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
     }
 
     return json(matrixJobResponse(job, sinceRevision));
-  }
-
-  if (request.method === "GET" && url.pathname.startsWith("/r/")) {
-    if (!isTrustedApiRequest(request)) {
-      return apiAuthRequiredResponse();
-    }
-
-    const purchasePathId = url.pathname.slice(3);
-    const resolved = runtime.sessions.resolvePurchasePath(purchasePathId);
-
-    if (!resolved) {
-      return json({ error: "Purchase path not found." }, { status: 404 });
-    }
-
-    if (resolved.path.url) {
-      let location = resolved.path.url;
-
-      if (resolved.path.provider === "costamar" && resolved.path.type === "search-redirect") {
-        const redirectContext = runtime.sessions.getRedirectContext(resolved.sessionId);
-        const providerContext = redirectContext?.providerContext;
-        const fallbackRequest = redirectContext?.request;
-        let canRedirect = false;
-        let blockedReason: string | undefined;
-
-        try {
-          const parsed = new URL(location);
-          const sessionContext = providerContext?.costamar;
-          const parsedTerminalId = parsed.searchParams.get("terminalId")?.trim() || undefined;
-          const parsedLang = parsed.searchParams.get("lang")?.trim() || undefined;
-          const parsedToken = parsed.searchParams.get("token")?.trim() || undefined;
-          const terminalId = parsedTerminalId || sessionContext?.terminalId;
-          const lang = parsedLang || sessionContext?.lang;
-          const parsedTokenIsUsable = Boolean(resolveUsableCostamarBrandedToken(parsedToken, terminalId));
-          const fastContext = normalizeCostamarProviderContext({
-            ...(sessionContext ?? {}),
-            ...(terminalId ? { terminalId } : {}),
-            ...(lang ? { lang } : {}),
-            token: parsedTokenIsUsable ? parsedToken : sessionContext?.token,
-          });
-          const redirectRequest = costamarRedirectRequestFromUrl(location, fallbackRequest);
-
-          if (
-            redirectRequest
-            && isAllowedCostamarBrandedSearchLocation(location, redirectRequest, fastContext)
-          ) {
-            const redirectResolution = await withCostamarRedirectTotalTimeout(
-              resolveCostamarRedirectForRequest(redirectRequest, fastContext, {
-                force: !parsedTokenIsUsable,
-                validateLive: true,
-                forceOnUnverified: true,
-              }),
-            );
-            blockedReason = redirectResolution.redirectVerification.reason;
-            if (redirectResolution.redirectVerification.verified) {
-              location = applyCostamarContextToBrandedSearchUrl(location, redirectResolution.context);
-              canRedirect = true;
-            }
-          } else if (!redirectRequest) {
-            blockedReason = "No se pudo reconstruir la busqueda Click and Book Plus desde el purchase path.";
-          } else {
-            blockedReason = "El enlace guardado de Click and Book Plus no pertenece a un origen permitido.";
-          }
-        } catch (error) {
-          blockedReason = safeCostamarRedirectFailureReason(error);
-          canRedirect = false;
-        }
-
-        if (!canRedirect) {
-          return costamarRedirectBlockedResponse(blockedReason);
-        }
-      }
-
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: location,
-          "Cache-Control": "no-store",
-          "Referrer-Policy": "no-referrer",
-        },
-      });
-    }
-
-    if (resolved.path.referenceText) {
-      return new Response(resolved.path.referenceText, {
-        status: 200,
-        headers: {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-store",
-          "Referrer-Policy": "no-referrer",
-        },
-      });
-    }
-
-    return json({ error: "Purchase path is unavailable." }, { status: 410 });
   }
 
   if (request.method === "POST" && url.pathname === "/api/quotation") {
@@ -3571,18 +3352,16 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
     const usdToPenRateInfo = offerNeedsQuotationRate(offer, source.request)
       ? await resolveStandaloneUsdToPenRateInfo(offer)
       : undefined;
-    /* The rate that produced the confirmed text travels with the offer. 05 §5
+    /* The rate that produced the confirmed text travels with the offer: 05 §5
        has the «Paquete migratorio» toggle rewrite the text live in the browser,
-       and without the rate on the offer that rewrite had to find one elsewhere
-       — in another provider's offer, or nowhere — which turned a confirmed
-       «S/ 361 por adulto» into «USD 100 por adulto». */
+       and that rewrite reads only the offer's own rate. */
     const quotedOffer = isUsableUsdToPenRate(usdToPenRateInfo?.rate)
       ? { ...offer, usdToPenRate: usdToPenRateInfo.rate }
       : offer;
 
     return json({
       searchSessionId: source.sessionId,
-      offer: quotedOffer,
+      offer: publicOffer(quotedOffer),
       commercialText: buildCommercialQuotation(quotedOffer, source.request, {
         usdToPenRateInfo,
         migrationPlan: payload.migrationPlan === true,

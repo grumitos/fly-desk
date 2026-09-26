@@ -1,40 +1,31 @@
 import { useLayoutEffect, useState, type RefObject } from "react"
 
+/** A ≥ 1100 (three columns), B 720–1099 (form on two rows), C phone. */
 export type ShellSize = "A" | "B" | "C"
 
 /**
- * Where the detail surface lives at this width.
- *
- * `column` is armazón A's third column; `side` is the 380px sheet armazón B
- * overlays the workspace with; `bottom` is the phone's full sheet.
+ * Where the detail lives: A's third column, the 380px side sheet over the
+ * workspace, or the phone's full sheet.
  */
 export type DetailPlacement = "column" | "side" | "bottom"
 
-function shellSizeForWidth(width: number): ShellSize {
-  if (width >= 1100) return "A"
-  if (width >= 720) return "B"
-  return "C"
+/*
+ * A phone stays on the phone layout in landscape. Keyed on the screen rather
+ * than the viewport, so an on-screen keyboard that shortens a tablet's viewport
+ * never swaps the layout under the field being typed into.
+ */
+function isHandheld(): boolean {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false
+  if (!window.matchMedia("(pointer: coarse)").matches) return false
+  return Math.min(window.screen.width, window.screen.height) <= 500
 }
 
-/*
- * What the three-column shell costs the list, from `.fd-results` and its stage:
- * 16px of screen padding on each side, the 248px filter column, the 316px
- * detail column and the two 10px gaps between them — 616px before a single
- * result is drawn. The stage is capped at `--fd-app-max-width` first.
- *
- * `LIST_BORDER_PX` is gone rather than kept as slack, and it is worth saying
- * why, because the two pixels decide something. It was the list card's own
- * border, and the list has not been a card since #45 removed the frame; the
- * subtraction survived as a two-pixel margin nobody had derived. Kept, a 1440
- * desk measures 822 against the 824 the row below asks for and loses its third
- * column — the commonest desk there is, dropping to a side sheet because of a
- * border that is not drawn. Slack has to be measured too, or it is just a
- * number that happens to be there.
- *
- * Kept here rather than read off the DOM on purpose: the answer decides whether
- * the detail column is built, and measuring the list to decide whether to
- * shrink it is a loop that oscillates.
- */
+function shellSizeForWidth(width: number): ShellSize {
+  if (width < 720 || isHandheld()) return "C"
+  return width >= 1100 ? "A" : "B"
+}
+
+/* The three-column desk, from `.fd-results` and the stage around it. */
 const APP_MAX_WIDTH_PX = 1760
 const SHELL_PADDING_PX = 16
 const FILTER_COLUMN_PX = 248
@@ -42,80 +33,20 @@ const DETAIL_COLUMN_PX = 316
 const RESULTS_COLUMN_GAP_PX = 10
 
 /*
- * The row's fixed measure — everything the list spends that is not the elastic
- * legs track, with every lane at its floor. 28 + 142 + 36 + 116 + 26 of lanes,
- * five 12px gaps, and 10px on each side of the row: 428. It was 436 while the
- * row was a card, whose 13px padding and 1px border it also had to carry.
- *
- * At its floor, because three of the row's six lanes grow on a desk wider than
- * the one this number is for: «who flies» to 170 and the price to 135, the
- * stops lane inside the legs track to 143, and what none of them can use is
- * split as spacing between the columns (`result-card.css` derives all of it).
- * Every one of those is *slack* — the row is already whole at 428 — so both
- * thresholds below, which are questions about the narrow end, are asked at the
- * floors and are the same numbers they were.
- *
- * The row and header still share a ten-pixel right gutter on `.fd-list-body`.
- * The row gives up its right padding to keep the lane geometry stable, so the
- * number here, the `@container fdlist` threshold and every lane's position are
- * untouched. The gutter is layout space only; `.fd-list-viewport` remains the
- * scroll owner.
+ * The result row's geometry, from `result-card.css`: the fixed lanes of the row
+ * (428) and of a leg (284), and the stops label at two stops («2 escalas · BOG,
+ * PTY», 112 at the row's 11px).
  */
 const RESULT_ROW_FIXED_PX = 428
-
-/*
- * And the leg's, inside that track: 56 + 126 + 66 with three 12px gaps.
- */
 const RESULT_LEG_FIXED_PX = 284
-
-/*
- * The two labels the elastic lane is sized against, measured against the loaded
- * face at the 11px the desk row draws them in.
- *
- * The floor is the one-stop long form, which 02 §5 says may not lose its
- * airport code. The comfortable case is the widest label the row can be asked
- * to draw while still naming every airport in it — from three stops the label
- * gives up and writes `+n`, so it is not a width anything can be sized to.
- */
-const STOPS_ONE_STOP_PX = 75
 const STOPS_TWO_STOPS_PX = 112
 
-/* The narrowest list the result row can wear the desk anatomy in, and the same
-   arithmetic as the `@container fdlist` threshold in result-card.css: below it
-   the row is the stacked phone card, whatever the shell around it is doing. */
-const CARD_DESK_MIN_LIST_PX = RESULT_ROW_FIXED_PX + RESULT_LEG_FIXED_PX + STOPS_ONE_STOP_PX
-
 /*
- * The difference between the two labels, which is the margin the detail column
- * has to leave the list on top of the stacking floor.
- *
- * This used to be `RESULT_CELL_RESTORED_PX = 44` — the gap between the card's
- * fixed measure with the baggage lane charged to the result cell and with it
- * charged to «who flies». That accounting is over: the lane has been paid for
- * out of «who flies» for two changes now, so there is nothing left to restore
- * and the constant had become a number with a story instead of a derivation.
- *
- * What the margin is *for* has not changed. Admitting the column takes 326px
- * off the list in a single step, so the budget is measured with the result cell
- * at the width it is meant to have rather than at the width the stacking rule
- * will merely tolerate. Measured, that is the same row with its elastic lane
- * holding the widest stops label it draws while still naming its airports
- * instead of the narrowest one it must: 112 − 75 = 37. Derived straight from
- * the 787 row instead, the column would enter at a 1403 shell and take 326px
- * off every list between 1403 and 1439 — a narrowing, which is the defect this
- * exists to prevent.
- *
- * The 37 is a claim on a particular lane, and it is only true because that lane
- * is the first the row's slack reaches: «who flies» and the price do not start
- * growing until the stops lane is full at 143, which is a list of 855. So a
- * 1440 desk still measures exactly 824 and its stops lane still measures
- * exactly 112, which is what `test/ui/results.playwright.ts` pins.
+ * The detail column is only built while the list beside it keeps a desk row
+ * wide enough to name two stops. Measured, not observed: reading the list's
+ * width to decide whether to shrink it would oscillate.
  */
-const RESULT_CELL_COMFORTABLE_PX = STOPS_TWO_STOPS_PX - STOPS_ONE_STOP_PX
-
-/* What the detail column has to leave behind, which is not the same question as
-   whether the row survives. */
-const DETAIL_COLUMN_MIN_LIST_PX = CARD_DESK_MIN_LIST_PX + RESULT_CELL_COMFORTABLE_PX
+const DETAIL_COLUMN_MIN_LIST_PX = RESULT_ROW_FIXED_PX + RESULT_LEG_FIXED_PX + STOPS_TWO_STOPS_PX
 
 function listWidthWithDetailColumn(shellWidth: number): number {
   return Math.min(shellWidth, APP_MAX_WIDTH_PX)
@@ -125,39 +56,24 @@ function listWidthWithDetailColumn(shellWidth: number): number {
     - RESULTS_COLUMN_GAP_PX * 2
 }
 
-/**
- * The detail column is not free, and the list is what pays for it.
- *
- * 02 §1 hands the detail a third column «from 1100» and a side sheet below,
- * which reads as a statement about the shell. It is not: 1100 is the width the
- * *form* needs for its six mínimos in one row, and the results region inherited
- * it. Measured, the detail column costs the list 326px, so from 1100 to 1439
- * the list is 484–823 — under what the row needs — and every result on a 1366
- * laptop wore the phone anatomy inside a three-column desk. Worse, the list was
- * *wider* one pixel below 1100 (809) than one pixel above it (484): widening
- * the window collapsed the cards.
- *
- * So the two mechanical changes armazón B makes to A are separated, each on the
- * threshold that constrains it. The form still reflows at 1100. The detail
- * leaves the grid as soon as keeping it would take the list below the width the
- * row needs to stay a desk row — the same sheet, the same scrim, 340px earlier.
- * The filter column never yields; that is what still separates this from
- * mobile.
- */
 function detailPlacementForWidth(width: number, shellSize: ShellSize): DetailPlacement {
   if (shellSize === "C") return "bottom"
   if (shellSize === "B") return "side"
   return listWidthWithDetailColumn(width) >= DETAIL_COLUMN_MIN_LIST_PX ? "column" : "side"
 }
 
-export function useShellSize(shellRef: RefObject<HTMLElement | null>): {
-  shellSize: ShellSize
-  detailPlacement: DetailPlacement
-} {
-  const [layout, setLayout] = useState<{ shellSize: ShellSize; detailPlacement: DetailPlacement }>({
-    shellSize: "A",
-    detailPlacement: "column",
-  })
+type ShellLayout = { shellSize: ShellSize; detailPlacement: DetailPlacement }
+
+function layoutForWidth(width: number): ShellLayout {
+  const shellSize = shellSizeForWidth(width)
+  return { shellSize, detailPlacement: detailPlacementForWidth(width, shellSize) }
+}
+
+export function useShellSize(shellRef: RefObject<HTMLElement | null>): ShellLayout {
+  /* The shell spans the page, so before it exists the page's width is its
+     width: a phone's first render is already the phone's, and no desk is built
+     only to be replaced. */
+  const [layout, setLayout] = useState<ShellLayout>(() => layoutForWidth(document.documentElement.clientWidth))
 
   useLayoutEffect(() => {
     const shell = shellRef.current
@@ -165,11 +81,10 @@ export function useShellSize(shellRef: RefObject<HTMLElement | null>): {
 
     const update = (width: number) => {
       setLayout((current) => {
-        const shellSize = shellSizeForWidth(width)
-        const detailPlacement = detailPlacementForWidth(width, shellSize)
-        return current.shellSize === shellSize && current.detailPlacement === detailPlacement
+        const next = layoutForWidth(width)
+        return current.shellSize === next.shellSize && current.detailPlacement === next.detailPlacement
           ? current
-          : { shellSize, detailPlacement }
+          : next
       })
     }
 

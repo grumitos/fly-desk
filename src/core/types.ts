@@ -11,16 +11,14 @@ export type ProviderId = "agil-local" | "costamar";
 
 /*
  * The closed catalogue of orders, and the one list the type, the request
- * validation and the sort `sortOffers` applies all come from. It was written
- * four times as an inline union — the HTTP contract, `ranking`, `orchestrator`
- * and the job record in `session-store` — and a copied union is a union that
- * gets widened in three places out of four.
+ * validation and the sort `sortOffers` applies all come from: a copied union is
+ * a union that gets widened in some places and not in others.
  */
 export const SORT_MODES = ["cheapest", "fastest", "departure", "stops"] as const;
 
 export type SortMode = (typeof SORT_MODES)[number];
 
-export type SearchState =
+type SearchState =
   | "search_live"
   | "search_cached"
   | "search_partial"
@@ -29,14 +27,14 @@ export type SearchState =
 
 export const SEARCH_CACHE_VERSION = 2;
 
-export type PriceConfidence =
+type PriceConfidence =
   | "indicative"
   | "live"
   | "validated"
   | "landing-page"
   | "stale";
 
-export type OfferPriceStatus =
+type OfferPriceStatus =
   | "unverified"
   | "verified"
   | "stale";
@@ -59,7 +57,7 @@ export interface RedirectVerification {
   checkedAt?: string;
 }
 
-export type PurchasePathType =
+type PurchasePathType =
   | "api-booking"
   | "deeplink"
   | "search-redirect"
@@ -67,7 +65,7 @@ export type PurchasePathType =
   | "manual-reference"
   | "gds-command";
 
-export type PurchasePathState =
+type PurchasePathState =
   | "none"
   | "manual"
   | "search_redirect"
@@ -132,7 +130,6 @@ export interface CostamarProviderContext {
   apiBaseUrl: string;
   brandBaseUrl: string;
   engineBaseUrl?: string;
-  markupBaseUrl?: string;
   terminalId: string;
   token: string;
   lang: string;
@@ -159,6 +156,8 @@ export interface ProviderDiagnostics {
   events: ProviderDiagnosticEvent[];
   offers?: number;
   warningCount?: number;
+  /** Completed without part of what it was asked: a day, a GDS or a matrix cell that never answered. */
+  partial?: boolean;
   error?: string;
 }
 
@@ -354,8 +353,7 @@ export interface ProviderMeta {
 }
 
 export interface SearchResponse {
-  offers: CanonicalOffer[];
-  allOffers?: CanonicalOffer[];
+  allOffers: CanonicalOffer[];
   scheduleGroups?: OfferScheduleGroup[];
   matrix?: MatrixCell[];
   searchMeta: SearchMeta;

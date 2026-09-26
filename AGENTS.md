@@ -13,6 +13,9 @@ Guidance for agents working on Fly Desk.
 
 ## Verification
 
+This is the only list of gates; other documents point here instead of
+repeating it.
+
 For code or runtime changes:
 
 ```powershell
@@ -21,6 +24,17 @@ bun run typecheck
 bun run lint
 bun run build
 bun run test
+```
+
+`bun run test` is the end-to-end suite (`docs/TESTING.md`); there is no unit
+suite. When a change touches what a release carries or how it starts
+(`deploy/`, `scripts/pack-release.sh`, `bunfig.toml`, `package.json`, the
+runtime's imports), also pack and smoke a release from a clean commit:
+
+```bash
+artifact="$(mktemp -d)/fly-desk.tar.gz"
+bash scripts/pack-release.sh "$(git rev-parse HEAD)" "$artifact"
+bun scripts/release-smoke.ts "$artifact"
 ```
 
 For documentation-only changes:

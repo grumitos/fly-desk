@@ -1,0 +1,243 @@
+import assert from "node:assert/strict";
+import { readSearchJob, type SearchJob } from "./support/api-client.ts";
+import type { RecordedRequest } from "./support/fake-upstream.ts";
+import { startedJob, waitForResults, waitForSweep } from "./support/flows.ts";
+import { defineSuite } from "./support/harness.ts";
+import type { OfferSpec, SearchQuery } from "./support/fixtures.ts";
+import {
+  addMonths,
+  daysInMonth,
+  eventually,
+  locationUses,
+  monthKey,
+  sweepMonthLabel,
+  TODAY,
+} from "./support/scenario.ts";
+import { durationMinutes, isUnclipped, migration, notice, results, searchForm, searchLink, showsWholeText } from "./support/ui.ts";
+
+/*
+ * The migratory sweep: every day of every chosen month against both
+ * providers, one search per month, drawn as a grid of months, each month
+ * followed from the moment its search starts.
+ */
+
+const suite = defineSuite({ file: import.meta.filename });
+
+const NOVEMBER = monthKey(TODAY);
+const DECEMBER = addMonths(NOVEMBER, 1);
+const JANUARY = addMonths(NOVEMBER, 2);
+/* A month's first poll leaves right behind its search (`POLL_FAST_MS`, 50 ms in
+   `frontend/src/lib/poll-schedule.ts`), well inside a poll interval (900 ms). */
+const FIRST_POLL_WITHIN_MS = 100;
+
+/* A connection in Bogotá that lands in Madrid the next day: 27 h 50 min on
+   the airports' own clocks in winter. Longer than a day, which Agil's `HHMM`
+   figure cannot hold, and ending on a Madrid clock that Click and Book Plus
+   stamps with Lima's offset. */
+const MADRID_BY_BOGOTA = ["AV84 LIM-BOG 01:10-04:40", "AV26 BOG-MAD 18:00-11:00+1"];
+const MADRID_BY_BOGOTA_MINUTES = 27 * 60 + 50;
+
+/* November has a fare every third day, from both providers. December: Agil
+   has nothing and Click and Book Plus is down. January: nobody has anything. */
+function madridWinter(query: SearchQuery): OfferSpec[] {
+  if (!query.departureDate.startsWith(NOVEMBER)) return [];
+  const dayOfMonth = Number(query.departureDate.slice(8));
+  return dayOfMonth % 3 === 0
+    ? [{ outbound: MADRID_BY_BOGOTA, price: 700 + dayOfMonth, baggage: { carryOn: true, checked: 1 } }]
+    : [];
+}
+
+suite.test("a sweep across the year boundary marks each month priced, failed or empty, opens a month without searching again, and counts once", async (scope) => {
+  const { fake, stack } = scope;
+  fake.setFlights("both", { origin: "LIM", destination: "MAD" }, madridWinter);
+  fake.fail("cbplus.search", { status: 503, body: { message: "Servicio no disponible" } }, {
+    where: (request) => Boolean(request.query?.departureDate.startsWith(DECEMBER)),
+  });
+  const usesBefore = locationUses(stack.appDataDir);
+
+  /* The link fills the route and the mode; the months are chosen by hand,
+     because a sweep never starts from a link. */
+  const { tracked, page } = await scope.signedInPage(searchLink({ mode: "migration", trip: "one-way", origin: "LIM", destination: "MAD" }));
+  await searchForm.months(page).click();
+  const picker = searchForm.monthPicker(page);
+  await searchForm.monthCell(picker, NOVEMBER).click();
+  await searchForm.monthCell(picker, JANUARY).click();
+  await page.keyboard.press("Escape");
+  await picker.waitFor({ state: "hidden" });
+  assert.equal(await searchForm.months(page).getAttribute("aria-label"), `Meses: nov ${NOVEMBER.slice(0, 4)} – ene ${JANUARY.slice(0, 4)}`);
+  assert.equal(fake.requests((request) => request.op === "agil.search" || request.op === "cbplus.search").length, 0, "the link searched on its own");
+
+  await searchForm.submit(page).click();
+  const november = sweepMonthLabel(NOVEMBER);
+  const december = sweepMonthLabel(DECEMBER);
+  const january = sweepMonthLabel(JANUARY);
+  await eventually(async () => {
+    assert.equal(await searchForm.stop(page).count(), 0, "the sweep is still running");
+    assert.match(await results.headerLine(page).innerText(), /1 de 3 meses con tarifa/);
+    assert.equal(await migration.monthCards(page).count(), 3);
+  }, { timeoutMs: 60_000, message: "the sweep settles" });
+
+  /* Priced: the cheapest day, and how many of the month's days had a fare. */
+  const novemberDays = daysInMonth(NOVEMBER) - Number(TODAY.slice(8)) + 1;
+  const pricedDays = Array.from({ length: novemberDays }, (_, index) => Number(TODAY.slice(8)) + index).filter((value) => value % 3 === 0);
+  const cheapest = 700 + pricedDays[0]!;
+  const novemberCard = await migration.monthCard(page, november).innerText();
+  assert.match(novemberCard, new RegExp(`USD ${cheapest}\\.00`));
+  assert.match(novemberCard, new RegExp(`${pricedDays.length} de ${novemberDays} días con tarifa`));
+  await migration.pricedMonth(page, november).waitFor();
+
+  /* Failed: the provider that fell, and no coverage figure a partial scan
+     could not honestly give. */
+  const decemberCard = await migration.monthCard(page, december).innerText();
+  assert.match(decemberCard, /Click and Book Plus/);
+  assert.match(decemberCard, /sin tarifa en el mes/);
+  assert.doesNotMatch(decemberCard, /días con tarifa/);
+  assert.equal(await migration.pricedMonth(page, december).count(), 0);
+
+  /* Empty: every day asked, none with a fare. */
+  const januaryCard = await migration.monthCard(page, january).innerText();
+  assert.match(januaryCard, new RegExp(`0 de ${daysInMonth(JANUARY)} días con tarifa`));
+  assert.equal(await migration.pricedMonth(page, january).count(), 0);
+
+  /* The sweep's one line: Click and Book Plus answered every month but
+     December, so it answered the sweep in part. */
+  await notice.line(page).waitFor({ timeout: 3_000 });
+  const line = await notice.line(page).innerText();
+  assert.equal(await notice.error(page).count(), 0, "a sweep with a list was announced as an error");
+  assert.match(line, /Resultados incompletos/);
+  assert.match(line, /Click and Book Plus respondió en parte/);
+  assert.doesNotMatch(line, /Agilsmart/);
+
+  /* Every day of every month went to both providers; December's answers
+     from Click and Book Plus were all failures. */
+  const startedDays = new Set(fake.requests("agil.startSearch").map((request) => request.query?.departureDate));
+  assert.equal(startedDays.size, novemberDays + daysInMonth(DECEMBER) + daysInMonth(JANUARY));
+  const cbplusDecember = fake.requests((request) => request.op === "cbplus.search" && Boolean(request.query?.departureDate.startsWith(DECEMBER)));
+  assert.equal(new Set(cbplusDecember.map((request) => request.query?.departureDate)).size, daysInMonth(DECEMBER));
+  assert.ok(cbplusDecember.every((request) => request.status === 503));
+
+  /* One sweep, three month searches, and the route counted once. */
+  const monthSearches = tracked.apiRequests.filter((request) => request.method === "POST" && new URL(request.url).pathname === "/api/search");
+  assert.equal(monthSearches.length, 3);
+  assert.deepEqual(
+    monthSearches.map((request) => JSON.parse(request.body ?? "{}").recordLocationUsage).sort(),
+    [false, false, true],
+  );
+  const usesAfter = locationUses(stack.appDataDir);
+  assert.equal((usesAfter.get("origin:LIM") ?? 0) - (usesBefore.get("origin:LIM") ?? 0), 1);
+  assert.equal((usesAfter.get("destination:MAD") ?? 0) - (usesBefore.get("destination:MAD") ?? 0), 1);
+
+  /* Opening a month reads the job the sweep already ran for it. */
+  const novemberJob = (await tracked.apiBodies())
+    .filter((entry) => new URL(entry.url).pathname === "/api/search" && entry.status === 200)
+    .map((entry) => JSON.parse(entry.body) as SearchJob & { request?: { legs?: Array<{ departureStart?: string }> } })
+    .find((job) => job.request?.legs?.[0]?.departureStart === TODAY);
+  assert.ok(novemberJob, "the November search was not seen");
+  const providerCallsBefore = fake.requests().length;
+  const opened = tracked.context.waitForEvent("page");
+  await migration.openMonth(page, november).click();
+  const monthTab = await opened;
+  await monthTab.waitForLoadState();
+  assert.equal(new URL(monthTab.url()).searchParams.get("job"), novemberJob.searchJobId);
+  const api = await scope.api();
+  const storedMonth = await readSearchJob(api, novemberJob.searchJobId);
+  const monthCards = await waitForResults(monthTab, storedMonth.allOffers?.length ?? -1);
+  assert.equal(storedMonth.allOffers?.length, pricedDays.length * 2, "each priced day holds one fare per provider");
+  assert.equal(fake.requests().length, providerCallsBefore, "opening a month asked the providers again");
+  /* Whatever either provider's figure or offset says, the journey is measured
+     on each airport's own clock. */
+  assert.deepEqual(
+    [...new Set(monthCards.map((card) => durationMinutes(card.legs[0]?.duration ?? "")))],
+    [MADRID_BY_BOGOTA_MINUTES],
+    `the month's fares do not read 27 h 50 min: ${monthCards.map((card) => card.legs[0]?.duration).join(", ")}`,
+  );
+});
+
+suite.test("a month that a provider answered in part is named in the sweep's one line, as the desk names it", async (scope) => {
+  const { fake } = scope;
+  fake.setFlights("agil", { origin: "LIM", destination: "MIA" }, [
+    { outbound: ["AA918 LIM-MIA 00:45-07:25"], price: 520, baggage: { carryOn: true, checked: 1 } },
+  ]);
+  /* One GDS drops every connection on one December day: December's Agil
+     search leaves it out, and completes in part. */
+  const partialDay = `${DECEMBER}-10`;
+  const dropped = (request: RecordedRequest) => request.op === "agil.search" && request.query?.departureDate === partialDay && request.query?.gds === 3;
+  fake.fail("agil.search", { reset: true }, { where: dropped });
+
+  const { page } = await scope.signedInPage(searchLink({ mode: "migration", trip: "one-way", origin: "LIM", destination: "MIA", months: [DECEMBER, JANUARY] }));
+  await searchForm.submit(page).click();
+  await waitForSweep(page, 2, 2);
+
+  /* A warning, not an error, in the desk's words. */
+  await notice.line(page).waitFor({ timeout: 3_000 });
+  assert.equal(await notice.error(page).count(), 0, "a sweep with a list was announced as an error");
+  const line = await notice.line(page).innerText();
+  assert.match(line, /Resultados incompletos/);
+  assert.match(line, /Agilsmart respondió en parte/);
+  assert.doesNotMatch(line, /Click and Book Plus/);
+
+  /* December gives no coverage figure a partial scan could not honour;
+     January, asked in full, does. */
+  assert.doesNotMatch(await migration.monthCard(page, sweepMonthLabel(DECEMBER)).innerText(), /días con tarifa/);
+  assert.match(await migration.monthCard(page, sweepMonthLabel(JANUARY)).innerText(), /días con tarifa/);
+  assert.deepEqual(fake.requests(dropped).map((request) => request.status), [0, 0]);
+});
+
+suite.test("each month of a sweep asks for its news as soon as its search has started", async (scope) => {
+  const { fake, stack } = scope;
+  fake.setFlights("both", { origin: "LIM", destination: "BOG" }, [
+    { outbound: ["AV8100 LIM-BOG 06:00-09:20"], price: 310, baggage: { carryOn: true, checked: 1 } },
+  ]);
+  const providers = fake.hold("*", (request) => request.op === "agil.search" || request.op === "cbplus.search");
+  const tracked = await scope.newContext({ signedIn: true });
+  await tracked.context.clock.install();
+  const page = await tracked.newPage();
+  await page.goto(`${stack.baseUrl}${searchLink({ mode: "migration", trip: "one-way", origin: "LIM", destination: "BOG", months: [DECEMBER] })}`);
+  await searchForm.submit(page).waitFor();
+
+  /* From here the page's timers wait for the test: a poll leaves only when the clock is moved. */
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 1_000);
+  const month = await startedJob<SearchJob>(page, () => searchForm.submit(page).click());
+  const polls = () => tracked.apiRequests.filter((request) => request.method === "GET" && new URL(request.url).pathname === `/api/search/${month.searchJobId}`);
+  assert.equal(polls().length, 0);
+  await page.clock.runFor(FIRST_POLL_WITHIN_MS);
+  await eventually(() => assert.equal(polls().length, 1, "the month's first poll waited for a poll interval"), { timeoutMs: 3_000 });
+
+  await page.clock.resume();
+  providers.release();
+  await waitForSweep(page, 1, 1);
+});
+
+suite.test("a month still being searched keeps its whole name beside «Más bajo» on the narrowest desk cards", async (scope) => {
+  const { fake } = scope;
+  /* The same fare every day, so both months tie for «Más bajo». Months run one
+     at a time, in calendar order: November finishes, and December's 25th stays
+     with its providers, so December keeps loading. */
+  fake.setFlights("both", { origin: "LIM", destination: "MAD" }, () => [
+    { outbound: MADRID_BY_BOGOTA, price: 703, baggage: { carryOn: true, checked: 1 } },
+  ]);
+  const held = fake.hold("*", (request) => (request.op === "agil.search" || request.op === "cbplus.search")
+    && request.query?.departureDate === `${DECEMBER}-25`);
+  const { page } = await scope.signedInPage(searchLink({ mode: "migration", trip: "one-way", origin: "LIM", destination: "MAD", months: [NOVEMBER, DECEMBER] }));
+  await searchForm.submit(page).click();
+  const november = sweepMonthLabel(NOVEMBER);
+  const december = sweepMonthLabel(DECEMBER);
+  for (const label of [november, december]) {
+    await migration.lowest(page, label).waitFor({ timeout: 30_000 });
+  }
+  await migration.updating(page, december).waitFor({ state: "attached" });
+
+  /* «Noviembre de 2026» is the widest month name, and the first month of a
+     sweep is never the one still loading. At 776 a desk card is the narrowest
+     the grid draws; 1024 and 1280 are where the year was lost. */
+  for (const width of [776, 1024, 1280]) {
+    await page.setViewportSize({ width, height: 800 });
+    for (const label of [november, december]) {
+      assert.ok(await showsWholeText(migration.monthName(page, label)), `${width}px: «${label}» is cut off`);
+      assert.ok(await isUnclipped(migration.lowest(page, label)), `${width}px: «Más bajo» on ${label} is cut off`);
+    }
+    assert.equal(await migration.updating(page, december).count(), 1, `${width}px: ${december} no longer says it is loading`);
+  }
+  held.release();
+  await waitForSweep(page, 2, 2);
+});

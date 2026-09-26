@@ -1,7 +1,9 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { envNumber } from "./env";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Browser, BrowserContext, Page } from "playwright";
+import { trackOpenBrowserTarget } from "./browser-targets";
 import {
   removePathWithRetries,
   registerActiveTempArtifact,
@@ -50,7 +52,6 @@ import {
   ProviderMeta,
   RedirectVerification,
   SearchRequest,
-  SearchResponse,
   Segment,
 } from "./core/types";
 import {
@@ -64,6 +65,7 @@ import {
   resolveUsableCostamarBrandedToken,
 } from "./provider-context";
 import { recordProviderFirstHttpRequest } from "./provider-diagnostics";
+import { fetchProvider, isProviderRequestCancelled, outsideProviderJob } from "./provider-fetch";
 import { providerPublicFailureMessage } from "./provider-status";
 import { openUrlLocally } from "./local-browser";
 import {
@@ -77,7 +79,7 @@ import {
   terminalPromptAvailable,
 } from "./terminal-secret-prompt";
 import { generateTotpCodeWithMetadata, totpCanSubmitSafely } from "./totp";
-import { rankLocationSuggestions } from "./location-suggestions";
+import { rankLocationSuggestions } from "./core/location-ranking";
 import { cityNameForIataCode, normalizeIataCode } from "./core/location-display";
 import {
   buildCostamarB2bWarmupPayload,
@@ -260,7 +262,7 @@ interface CbPlusPricedItinerary {
   };
 }
 
-export interface CostamarAutocompleteAirport {
+interface CostamarAutocompleteAirport {
   code?: string;
   countryCode?: string;
   cityCode?: string;
@@ -272,7 +274,6 @@ export interface CostamarAutocompleteAirport {
 interface CostamarSearchOutcome {
   offers: CanonicalOffer[];
   warnings: string[];
-  partial: boolean;
 }
 
 interface CostamarB2bPromptRequest {
@@ -309,7 +310,7 @@ interface CostamarKeyboardInputTarget {
   type(text: string, options?: { delay?: number }): Promise<unknown>;
 }
 
-export interface CostamarB2bAuthChallenge {
+interface CostamarB2bAuthChallenge {
   kind: "single" | "split";
   inputIndexes: number[];
 }
@@ -345,19 +346,17 @@ function cbPlusEnv(primaryName: string, legacyName: string): string | undefined 
   return process.env[primaryName]?.trim() || process.env[legacyName]?.trim() || undefined;
 }
 
-const COSTAMAR_HTTP_TIMEOUT_MS = Math.max(
-  5000,
-  Number(cbPlusEnv("CBPLUS_HTTP_TIMEOUT_MS", "COSTAMAR_HTTP_TIMEOUT_MS") ?? 20000),
-);
+const COSTAMAR_HTTP_TIMEOUT_MS = envNumber(["CBPLUS_HTTP_TIMEOUT_MS", "COSTAMAR_HTTP_TIMEOUT_MS"], 20000, { min: 5000 });
 const COSTAMAR_AIR_API_BASE_URL = process.env.CBPLUS_AIR_API_BASE_URL?.trim()
   || process.env.COSTAMAR_AIR_API_BASE_URL?.trim()
   || "https://api-zneith.zdev.tech/api-air-0.1";
 const COSTAMAR_REDIRECT_SESSION_WARNING =
   "Click and Book Plus redirect token is missing, expired, or incompatible with this terminal.";
 const COSTAMAR_SESSION_WARMUP_POLL_MS = 500;
-const COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS = Math.max(
-  1500,
-  Number(cbPlusEnv("CBPLUS_REDIRECT_VERIFY_TIMEOUT_MS", "COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS") ?? 6000),
+const COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS = envNumber(
+  ["CBPLUS_REDIRECT_VERIFY_TIMEOUT_MS", "COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS"],
+  6000,
+  { min: 1500 },
 );
 const COSTAMAR_REDIRECT_VERIFY_FAILURE_PATTERN =
   /login|iniciar\s+sesi[oó]n|google\s+authenticator|auth(?:entication|orization)?\s*(?:required|failed|failure|error)|(?:required|failed|failure|error)\s+auth(?:entication|orization)?|otp|captcha|expired|expirad|invalid|inv[aá]lid|unauthorized|forbidden/i;
@@ -374,9 +373,7 @@ const recentCostamarSessionWarmups = new Map<string, number>();
 let costamarWarmupOpener: typeof openUrlLocally = openUrlLocally;
 /*
  * How long the browser fallback lets Chrome settle between the B2B page and the
- * branded one. A real Chrome needs the pause; a stubbed opener writes its
- * artifact synchronously and only pays for it, so tests may shorten it. The
- * default is the production value and nothing outside a test changes it.
+ * branded one.
  */
 const COSTAMAR_WARMUP_BROWSER_SETTLE_MS = 750;
 let costamarWarmupBrowserSettleMs = COSTAMAR_WARMUP_BROWSER_SETTLE_MS;
@@ -570,7 +567,7 @@ function costamarB2bInteractivePromptAvailable(): boolean {
   return costamarB2bPromptEnabled() && terminalPromptAvailable();
 }
 
-export async function applyCostamarB2bKeyboardInput(
+async function applyCostamarB2bKeyboardInput(
   target: CostamarKeyboardInputTarget,
   value: string,
   options?: { clear?: boolean; typingDelayMs?: number },
@@ -783,9 +780,14 @@ function logCostamarB2bDebug(stage: string, detail?: CostamarB2bDebugDetail): vo
   console.log(`[costamar-b2b] ${stage}`, sanitizeCostamarB2bDebugDetail(detail));
 }
 
+/* The B2B browser path drives Chrome through Playwright, which only a
+   development install carries: a release installs no packages. */
 async function getPlaywright(): Promise<typeof import("playwright")> {
   if (!playwrightPromise) {
-    playwrightPromise = import("playwright");
+    playwrightPromise = import("playwright").catch((error: unknown) => {
+      console.warn("Click and Book Plus browser fallback unavailable: Playwright is not installed, and a release installs no packages.");
+      throw error;
+    });
   }
 
   return playwrightPromise;
@@ -820,7 +822,7 @@ function normalizeCostamarB2bTokenResponse(rawValue: unknown): string {
   return "";
 }
 
-export function isCostamarB2bAirlineSearchResponse(method: string, url: string): boolean {
+function isCostamarB2bAirlineSearchResponse(method: string, url: string): boolean {
   if (method.toUpperCase() !== "POST") {
     return false;
   }
@@ -989,18 +991,6 @@ function prepareTemporaryCostamarChromeProfile(
   return tempRoot;
 }
 
-export function prepareTemporaryCostamarChromeProfileForTests(
-  profileName: string,
-  options: { cloneSourceProfile?: boolean } = {},
-): string {
-  return prepareTemporaryCostamarChromeProfile(profileName, options);
-}
-
-export async function cleanupTemporaryCostamarChromeProfileForTests(tempRoot: string): Promise<void> {
-  await removePathWithRetries(tempRoot, 6, 250);
-  unregisterActiveTempArtifact(tempRoot);
-}
-
 function readSetCookieHeaders(headers: Headers): string[] {
   const extended = headers as Headers & { getSetCookie?: () => string[] };
   const cookies = extended.getSetCookie?.();
@@ -1146,7 +1136,7 @@ async function generateCostamarRedirectContextViaB2BHttp(
     });
 
     if (costamarB2bResponseRequiresAuthenticator(login.body)) {
-      const authCode = await promptCostamarB2bAuthCode("Codigo de Google Authenticator");
+      const authCode = await promptCostamarB2bAuthCode("Código de Google Authenticator");
       if (!authCode) {
         return undefined;
       }
@@ -1233,12 +1223,6 @@ async function generateCostamarRedirectContextViaB2BHttp(
     logCostamarB2bDebug("http automation failed");
     return undefined;
   }
-}
-
-export async function generateCostamarRedirectContextViaB2BHttpForTests(
-  context: CostamarProviderContext,
-): Promise<CostamarProviderContext | undefined> {
-  return generateCostamarRedirectContextViaB2BHttp(context);
 }
 
 function collectCostamarCandidatesFromText(
@@ -1369,14 +1353,6 @@ async function collectCostamarCandidatesFromPage(
   } catch {
     // Ignore pages that are not script-accessible yet.
   }
-}
-
-export async function collectCostamarCandidatesFromPageForTests(
-  page: Pick<Page, "url" | "evaluate">,
-): Promise<CostamarSessionCandidate[]> {
-  const pool = new Map<string, CostamarSessionCandidate>();
-  await collectCostamarCandidatesFromPage(page as Page, pool, "test");
-  return [...pool.values()];
 }
 
 function observeCostamarBrowserPages(
@@ -1647,7 +1623,7 @@ function costamarB2bAuthInputPriority(input: CostamarB2bAuthInputDescriptor): nu
   return score + input.index;
 }
 
-export function detectCostamarB2bAuthChallenge(
+function detectCostamarB2bAuthChallenge(
   snapshot: Partial<CostamarB2bAuthSnapshot> | undefined,
 ): CostamarB2bAuthChallenge | undefined {
   const text = String(snapshot?.text ?? "");
@@ -1963,12 +1939,6 @@ async function ensureCostamarB2bSession(page: Page): Promise<boolean> {
   return false;
 }
 
-export async function ensureCostamarB2bSessionForTests(
-  page: Pick<Page, "url" | "goto" | "waitForTimeout" | "waitForLoadState" | "locator">,
-): Promise<boolean> {
-  return ensureCostamarB2bSession(page as Page);
-}
-
 async function launchCostamarBrowserContext(): Promise<{
   context: BrowserContext;
   tempRoot: string;
@@ -2077,6 +2047,7 @@ async function generateCostamarRedirectContextViaB2B(
   });
   let liveBrowser: Browser | undefined;
   let livePage: Page | undefined;
+  let forgetLivePage: (() => void) | undefined;
   let closeLivePage = false;
   let resetLiveBrowserConnection = false;
   let browserContext: BrowserContext | undefined;
@@ -2101,11 +2072,13 @@ async function generateCostamarRedirectContextViaB2B(
       );
       if (liveSession) {
         liveBrowser = liveSession.browser;
-        livePage = await withCostamarB2bTimeout(
+        const page = await withCostamarB2bTimeout(
           liveSession.context.newPage(),
           warmupTimeoutMs,
           "Click and Book Plus live page creation",
         );
+        livePage = page;
+        forgetLivePage = trackOpenBrowserTarget(() => page.close());
         closeLivePage = true;
 
         observeCostamarControlledPage(livePage, pool, "live-b2b", observedPages);
@@ -2169,6 +2142,7 @@ async function generateCostamarRedirectContextViaB2B(
       resetLiveBrowserConnection = Boolean(liveBrowser);
       // Fall through to the isolated-profile automation below.
     } finally {
+      forgetLivePage?.();
       if (closeLivePage && livePage) {
         await withCostamarB2bTimeout(
           livePage.close().catch(() => undefined),
@@ -2329,12 +2303,6 @@ function recordCostamarWarmupStep(
   }
 }
 
-export function getLastCostamarWarmupDiagnostics(): CostamarWarmupDiagnostics | undefined {
-  return lastCostamarWarmupDiagnostics
-    ? JSON.parse(JSON.stringify(lastCostamarWarmupDiagnostics)) as CostamarWarmupDiagnostics
-    : undefined;
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -2398,7 +2366,7 @@ async function closeCostamarBrowser(browser: Browser | undefined): Promise<void>
   }
 }
 
-export async function warmCostamarRedirectContext(
+async function warmCostamarRedirectContext(
   request: SearchRequest,
   context: CostamarProviderContext,
   options: { force?: boolean } = {},
@@ -2432,7 +2400,9 @@ export async function warmCostamarRedirectContext(
     });
   }
 
-  const promise = (async () => {
+  /* Every search of this terminal waits on the one warm-up, so no single
+     search's stop aborts it. */
+  const promise = outsideProviderJob(async () => {
     recentCostamarSessionWarmups.set(warmupKey, Date.now());
     const seedContext = {
       ...context,
@@ -2479,7 +2449,7 @@ export async function warmCostamarRedirectContext(
     }
 
     return latest;
-  })();
+  });
 
   pendingCostamarSessionWarmups.set(warmupKey, promise);
   try {
@@ -2487,43 +2457,6 @@ export async function warmCostamarRedirectContext(
   } finally {
     pendingCostamarSessionWarmups.delete(warmupKey);
   }
-}
-
-export function setCostamarWarmupOpenerForTests(
-  opener?: typeof openUrlLocally,
-): void {
-  costamarWarmupOpener = opener ?? openUrlLocally;
-}
-
-export function setCostamarWarmupGeneratorForTests(
-  generator?: CostamarWarmupGenerator,
-): void {
-  costamarWarmupGenerator = generator ?? generateCostamarRedirectContextViaB2B;
-}
-
-export function setCostamarWarmupBrowserSettleMsForTests(
-  settleMs?: number,
-): void {
-  costamarWarmupBrowserSettleMs = settleMs === undefined
-    ? COSTAMAR_WARMUP_BROWSER_SETTLE_MS
-    : Math.max(0, Math.trunc(settleMs));
-}
-
-export function resetCostamarWarmupStateForTests(): void {
-  engineCache.clear();
-  pendingCostamarSessionWarmups.clear();
-  recentCostamarSessionWarmups.clear();
-  costamarWarmupOpener = openUrlLocally;
-  costamarWarmupBrowserSettleMs = COSTAMAR_WARMUP_BROWSER_SETTLE_MS;
-  costamarWarmupGenerator = generateCostamarRedirectContextViaB2B;
-  costamarB2bPromptProvider = promptCostamarB2bViaTerminal;
-  cachedInteractiveCostamarB2bCredentials = {};
-  pendingCostamarB2bCredentialPrompt = undefined;
-  pendingCostamarB2bAuthPrompt = undefined;
-  lastCostamarWarmupDiagnostics = undefined;
-  void closeLiveCostamarBrowserConnection();
-  liveCostamarBrowserRetryAfterMs = 0;
-  playwrightPromise = undefined;
 }
 
 function readPositiveIntegerEnv(primaryName: string, legacyName: string, fallback: number): number {
@@ -2547,7 +2480,7 @@ function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-export function buildCostamarPrewarmRequest(now = new Date()): SearchRequest {
+function buildCostamarPrewarmRequest(now = new Date()): SearchRequest {
   const departureOffsetDays = readPositiveIntegerEnv(
     "CBPLUS_PREWARM_DEPARTURE_OFFSET_DAYS",
     "COSTAMAR_PREWARM_DEPARTURE_OFFSET_DAYS",
@@ -2634,7 +2567,7 @@ async function searchLocalCostamarExactWithRetry(
     try {
       return await searchLocalCostamarExact(request, providerContext);
     } catch (error) {
-      if (attempt >= COSTAMAR_RANGE_DAY_RETRY_ATTEMPTS) {
+      if (attempt >= COSTAMAR_RANGE_DAY_RETRY_ATTEMPTS || refusesEveryDate(error) || isProviderRequestCancelled(error)) {
         throw error;
       }
 
@@ -3478,39 +3411,31 @@ function ensureCostamarCredentials(context: CostamarProviderContext): void {
   }
 }
 
+/*
+ * A request to the Click and Book Plus API: a flight search or the engine's
+ * metadata, neither of which changes anything at the provider, so one that
+ * got no answer is sent once more on a new connection (`fetchProvider`). A
+ * quote's revalidation is such a search, and one lost that way would leave
+ * the fare unconfirmed.
+ */
 async function fetchCostamar(
   context: CostamarProviderContext,
   path: string,
   init: RequestInit,
   action: string,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), COSTAMAR_HTTP_TIMEOUT_MS);
   recordProviderFirstHttpRequest(action);
-
-  try {
-    return await fetch(`${context.apiBaseUrl}${path}`, {
-      ...init,
-      headers: {
-        accept: "application/json, text/plain, */*",
-        ...(init.body ? { "Content-Type": "application/json" } : {}),
-        "Client-Id": "1d3X65B.e92dCDJss315",
-        "Client-Name": "CBPLUS",
-        "Application-Name": "cbplus-app",
-        ...(init.headers ?? {}),
-      },
-      signal: controller.signal,
-    });
-  } catch (error) {
-    const timedOut = controller.signal.aborted || (error instanceof Error && error.name === "AbortError");
-    throw new Error(
-      timedOut
-        ? `${action} timed out.`
-        : `${action} failed before receiving a response.`,
-    );
-  } finally {
-    clearTimeout(timeout);
-  }
+  return fetchProvider(`${context.apiBaseUrl}${path}`, {
+    ...init,
+    headers: {
+      accept: "application/json, text/plain, */*",
+      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      "Client-Id": "1d3X65B.e92dCDJss315",
+      "Client-Name": "CBPLUS",
+      "Application-Name": "cbplus-app",
+      ...(init.headers ?? {}),
+    },
+  }, { label: action, timeoutMs: COSTAMAR_HTTP_TIMEOUT_MS });
 }
 
 async function fetchCostamarJson<T>(
@@ -3532,7 +3457,7 @@ function isCostamarB2bUrlAllowed(url: string): boolean {
   }
 }
 
-export async function readCostamarJsonResponse<T = Record<string, unknown>>(
+async function readCostamarJsonResponse<T = Record<string, unknown>>(
   response: Response,
   action: string,
 ): Promise<T> {
@@ -3568,7 +3493,8 @@ async function getEngineMetadata(context: CostamarProviderContext): Promise<Cost
     return cached;
   }
 
-  const request = fetchCostamarJson<CostamarEngineMetadata>(
+  /* Cached for every search after this one, so no single search's stop aborts it. */
+  const request = outsideProviderJob(() => fetchCostamarJson<CostamarEngineMetadata>(
     {
       ...context,
       apiBaseUrl: engineBaseUrl,
@@ -3576,7 +3502,7 @@ async function getEngineMetadata(context: CostamarProviderContext): Promise<Cost
     `/engines/${encodeURIComponent(context.terminalId)}`,
     { method: "GET" },
     "Click and Book Plus engine metadata",
-  ).catch((error) => {
+  )).catch((error) => {
     engineCache.delete(cacheKey);
     throw error;
   });
@@ -3585,12 +3511,23 @@ async function getEngineMetadata(context: CostamarProviderContext): Promise<Cost
   return request;
 }
 
-export function buildCostamarSearchWarning(payload: CostamarSearchResponse): string | undefined {
-  const status = payload.status;
-  if (typeof status !== "number" || status < 400) {
-    return undefined;
-  }
+/*
+ * Click and Book Plus refuses a search with HTTP 200 and the real status in
+ * the body. The refusal is a failure of the provider, like an HTTP error, and
+ * its message is worded so that `providerPublicFailureMessage` names the
+ * right cause.
+ */
+class CostamarSearchRejectedError extends Error {
+  readonly status: number;
 
+  constructor(status: number) {
+    super(describeCostamarSearchRejection(status));
+    this.name = "CostamarSearchRejectedError";
+    this.status = status;
+  }
+}
+
+function describeCostamarSearchRejection(status: number): string {
   if (status === 401) {
     return "Click and Book Plus rejected this search: the branded token is invalid, expired, or no longer belongs to this agency.";
   }
@@ -3600,11 +3537,11 @@ export function buildCostamarSearchWarning(payload: CostamarSearchResponse): str
   }
 
   if (status === 403) {
-    return "Click and Book Plus rejected this search: agency or permission validation failed.";
+    return "Click and Book Plus rejected this search: it refused the agency's authorization.";
   }
 
   if (status === 429) {
-    return "Click and Book Plus temporarily rate-limited this search.";
+    return "Click and Book Plus is temporarily unavailable: it rate-limited this search.";
   }
 
   if (status >= 500) {
@@ -3612,6 +3549,12 @@ export function buildCostamarSearchWarning(payload: CostamarSearchResponse): str
   }
 
   return `Click and Book Plus rejected this search with status ${status}.`;
+}
+
+/* A refused token or agency is refused for every other date of the same
+   search, so a range or a matrix stops asking at the first one. */
+function refusesEveryDate(error: unknown): error is CostamarSearchRejectedError {
+  return error instanceof CostamarSearchRejectedError && [401, 402, 403].includes(error.status);
 }
 
 function normalizeSegment(
@@ -3706,8 +3649,6 @@ function normalizeItinerary(
   }
 
   const layoverMinutes = computeLayovers(segments);
-  const first = segments[0];
-  const last = segments[segments.length - 1];
 
   return {
     rawSegments,
@@ -3858,7 +3799,7 @@ function costamarRedirectResponseLooksValid(status: number, location: string, bo
   return status >= 200 && status < 400;
 }
 
-export async function verifyCostamarRedirectCandidate(
+async function verifyCostamarRedirectCandidate(
   request: SearchRequest,
   context: CostamarProviderContext,
 ): Promise<RedirectVerification> {
@@ -3867,21 +3808,21 @@ export async function verifyCostamarRedirectCandidate(
     return localVerification;
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS);
+  /* Loading the branded search page reads a search, as an agent's browser
+     does, so one that got no answer is asked once more (`fetchProvider`)
+     rather than taken for a token to refresh. */
   try {
-    const response = await fetch(buildCostamarBrandedSearchUrl(request, context), {
+    const response = await fetchProvider(buildCostamarBrandedSearchUrl(request, context), {
       method: "GET",
       redirect: "manual",
-      signal: controller.signal,
       headers: {
         Accept: "text/html,application/xhtml+xml",
       },
-    });
+    }, { label: "Click and Book Plus redirect validation", timeoutMs: COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS });
     const location = response.headers.get("location") ?? "";
     const body = response.status >= 300 && response.status < 400
       ? ""
-      : (await response.text().catch(() => "")).slice(0, 4096);
+      : (await response.text()).slice(0, 4096);
     if (costamarRedirectResponseLooksValid(response.status, location, body)) {
       return costamarRedirectVerification("verified", true, "The branded redirect accepted the token.");
     }
@@ -3893,14 +3834,12 @@ export async function verifyCostamarRedirectCandidate(
       false,
       "Click and Book Plus redirect validation could not be completed.",
     );
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
 export function safeCostamarRedirectFailureReason(error: unknown): string {
   const message = error instanceof Error ? error.message.trim() : "";
-  if (/^La validacion del redirect de Click and Book Plus tardo mas de \d+ms\.$/.test(message)) {
+  if (/^La validación del redirect de Click and Book Plus tardó más de \d+ms\.$/.test(message)) {
     return message;
   }
   return "No se pudo validar el redirect de Click and Book Plus.";
@@ -3913,7 +3852,7 @@ function redirectStateRequiresRefresh(state: CostamarRedirectState): boolean {
     || state === "blocked";
 }
 
-export function shouldWarnCostamarRedirectUnavailable(
+function shouldWarnCostamarRedirectUnavailable(
   offerCount: number,
   verification: RedirectVerification,
 ): boolean {
@@ -4015,7 +3954,7 @@ export function buildCostamarPurchasePaths(
   ];
 }
 
-export function buildCostamarBrandedSearchUrl(
+function buildCostamarBrandedSearchUrl(
   request: SearchRequest,
   context: CostamarProviderContext,
 ): string {
@@ -4104,7 +4043,7 @@ export function isAllowedCostamarBrandedSearchLocation(
   });
 }
 
-export function mapCostamarRecommendationToOffer(
+function mapCostamarRecommendationToOffer(
   recommendation: CostamarRecommendation,
   request: SearchRequest,
   context: CostamarProviderContext,
@@ -4226,9 +4165,9 @@ async function searchRecommendations(
   ensureCostamarCredentials(context);
 
   // The engine metadata is only needed when mapping, so it travels alongside the
-  // search instead of gating it. Awaiting it after the search keeps today's error
-  // semantics (an engine failure still fails the whole search); the no-op catch
-  // only prevents an unhandled rejection while the search is in flight.
+  // search instead of gating it. An engine failure fails the whole search; the
+  // no-op catch only prevents an unhandled rejection while the search is in
+  // flight.
   const enginePromise = getEngineMetadata(context);
   enginePromise.catch(() => undefined);
   const search = (searchContext: CostamarProviderContext) => fetchCostamarJson<CostamarSearchResponse>(
@@ -4242,8 +4181,7 @@ async function searchRecommendations(
   );
 
   // Start the search without waiting for the metadata, then await the metadata
-  // first so an engine failure still wins over a search failure, as it did when
-  // the two calls were sequential.
+  // first so an engine failure wins over a search failure.
   const initialSearch = (async () => search(context))();
   initialSearch.catch(() => undefined);
   const engine = await enginePromise;
@@ -4274,14 +4212,15 @@ async function searchRecommendations(
     }
   }
 
-  const responseWarning = buildCostamarSearchWarning(payload);
+  if (typeof payload.status === "number" && payload.status >= 400) {
+    throw new CostamarSearchRejectedError(payload.status);
+  }
+
   const scheduleGroupScope = buildCostamarScheduleGroupScope(request);
-  const recommendations = responseWarning
-    ? []
-    : extractCostamarRecommendations(payload, request).map((recommendation) => ({
-      ...recommendation,
-      scheduleGroupScope,
-    }));
+  const recommendations = extractCostamarRecommendations(payload, request).map((recommendation) => ({
+    ...recommendation,
+    scheduleGroupScope,
+  }));
   const recommendationVariants = recommendations.flatMap((recommendation) =>
     expandCostamarRecommendationFlightOptions(recommendation, request),
   );
@@ -4301,7 +4240,6 @@ async function searchRecommendations(
     ? buildCostamarRedirectWarning(redirectVerification)
     : undefined;
   const warnings = uniqueStrings([
-    ...(responseWarning ? [responseWarning] : []),
     ...(redirectWarning ? [redirectWarning] : []),
     ...offers.flatMap((offer) => offer.warnings),
   ]);
@@ -4313,48 +4251,18 @@ async function searchRecommendations(
   return {
     offers,
     warnings,
-    partial: Boolean(responseWarning),
   };
 }
 
-export async function searchLocalCostamarExact(
+async function searchLocalCostamarExact(
   request: SearchRequest,
   providerContext?: ProviderContext,
 ): Promise<ProviderSearchResult> {
-  if (request.searchMode === "stay-range") {
-    return searchLocalCostamarRange(request, providerContext);
-  }
-
   const outcome = await searchRecommendations(request, providerContext, false);
   return {
     offers: outcome.offers,
     warnings: outcome.warnings,
-    partial: outcome.partial,
-  };
-}
-
-export function createLocalCostamarSearchDraft(
-  request: SearchRequest,
-  providerMeta: ProviderMeta,
-): SearchResponse {
-  const requestedAt = new Date().toISOString();
-  const warning = request.searchMode === "stay-range"
-    ? "Consultando Click and Book Plus en paralelo. Los resultados se iran agregando."
-    : "Consultando Click and Book Plus. Los resultados se iran agregando.";
-
-  return {
-    offers: [],
-    allOffers: [],
-    searchMeta: {
-      requestedAt,
-      completedAt: requestedAt,
-      providersUsed: ["costamar"],
-      warnings: [warning],
-      partial: true,
-      searchState: "search_partial",
-    },
-    providerMeta,
-    warnings: [warning],
+    partial: false,
   };
 }
 
@@ -4378,42 +4286,6 @@ function enumerateRangeRequests(request: SearchRequest): SearchRequest[] {
   return enumerateUsefulFlexibleRequests(request);
 }
 
-export async function searchLocalCostamarRange(
-  request: SearchRequest,
-  providerContext?: ProviderContext,
-): Promise<ProviderSearchResult> {
-  const candidates = enumerateRangeRequests(request);
-  const outcomes = await mapConcurrent(candidates, COSTAMAR_CONCURRENCY.rangeSearch, async (derivedRequest) => {
-    try {
-      return {
-        result: await searchLocalCostamarExactWithRetry(derivedRequest, providerContext),
-      };
-    } catch (error) {
-      return {
-        error: providerPublicFailureMessage("costamar", error),
-      };
-    }
-  });
-
-  const warnings = uniqueStrings([
-    ...outcomes.flatMap((outcome) => outcome.result?.warnings ?? []),
-    ...outcomes.flatMap((outcome) => outcome.error ? [outcome.error] : []),
-  ]);
-  const offers = dedupeCostamarOffers(
-    outcomes.flatMap((outcome) => outcome.result?.offers ?? []),
-  );
-
-  if (offers.length === 0 && warnings.length === 0) {
-    warnings.push("Click and Book Plus returned no offers for this date range.");
-  }
-
-  return {
-    offers,
-    warnings,
-    partial: outcomes.some((outcome) => Boolean(outcome.error) || outcome.result?.partial === true),
-  };
-}
-
 export async function resolveLocalCostamarRangeProgressive(
   request: SearchRequest,
   providerContext?: ProviderContext,
@@ -4422,20 +4294,30 @@ export async function resolveLocalCostamarRangeProgressive(
   const candidates = enumerateRangeRequests(request);
   const aggregatedOffers: CanonicalOffer[] = [];
   const warnings: string[] = [];
+  const refusals: CostamarSearchRejectedError[] = [];
   let partial = false;
   let stopRequested = false;
+  /* How many days answered, fares or none, and why each of the others failed. */
+  let answeredDays = 0;
+  const failedDays = new Map<SearchRequest, unknown>();
 
   await mapConcurrent(candidates, COSTAMAR_CONCURRENCY.rangeSearch, async (derivedRequest) => {
     let progressOffers: CanonicalOffer[] = [];
     let progressWarnings: string[] = [];
     try {
       const result = await searchLocalCostamarExactWithRetry(derivedRequest, providerContext);
+      answeredDays += 1;
       aggregatedOffers.push(...result.offers);
       progressOffers = result.offers;
       progressWarnings = result.warnings;
       warnings.push(...result.warnings);
       partial = partial || result.partial;
     } catch (error) {
+      if (refusesEveryDate(error)) {
+        refusals.push(error);
+        return;
+      }
+      failedDays.set(derivedRequest, error);
       const warning = providerPublicFailureMessage("costamar", error);
       partial = true;
       warnings.push(warning);
@@ -4451,8 +4333,19 @@ export async function resolveLocalCostamarRangeProgressive(
       stopRequested = true;
     }
   }, {
-    canContinue: () => !stopRequested,
+    canContinue: () => !stopRequested && refusals.length === 0,
   });
+
+  const [refusal] = refusals;
+  if (refusal) {
+    throw refusal;
+  }
+
+  /* No day answered: the provider failed, with the first day's reason. */
+  const firstFailedDay = candidates.find((candidate) => failedDays.has(candidate));
+  if (answeredDays === 0 && firstFailedDay) {
+    throw failedDays.get(firstFailedDay);
+  }
 
   const offers = dedupeCostamarOffers(aggregatedOffers);
   const finalWarnings = uniqueStrings(warnings);
@@ -4538,7 +4431,7 @@ function spansExactFlexibleWindow(start?: string, end?: string): boolean {
   return Boolean(start && end && diffDays(start, end) === 6);
 }
 
-export function matchesCostamarNativeFlexibleWindow(request: SearchRequest): boolean {
+function matchesCostamarNativeFlexibleWindow(request: SearchRequest): boolean {
   const leg = request.legs[0];
   if (request.tripType !== "round-trip") {
     return false;
@@ -4551,9 +4444,9 @@ export function matchesCostamarNativeFlexibleWindow(request: SearchRequest): boo
 async function seedMatrixWithFlexibleSearch(
   request: SearchRequest,
   providerContext?: ProviderContext,
-): Promise<{ offers: Map<string, CanonicalOffer>; partial: boolean }> {
+): Promise<Map<string, CanonicalOffer>> {
   if (!matchesCostamarNativeFlexibleWindow(request)) {
-    return { offers: new Map(), partial: false };
+    return new Map();
   }
 
   const leg = request.legs[0];
@@ -4592,10 +4485,7 @@ async function seedMatrixWithFlexibleSearch(
     }
   }
 
-  return {
-    offers: byKey,
-    partial: search.partial,
-  };
+  return byKey;
 }
 
 function buildMatrixCellFromOffer(
@@ -4631,23 +4521,17 @@ function buildMatrixCellFromOffer(
 async function resolveCellPrice(
   derivedRequest: SearchRequest,
   providerContext?: ProviderContext,
-): Promise<{ offer?: CanonicalOffer; partial: boolean; warnings: string[] }> {
+): Promise<CanonicalOffer | undefined> {
   const search = await searchLocalCostamarExact(derivedRequest, providerContext);
   const offers = enrichComparisonMetrics(search.offers);
 
-  const offer = offers.reduce<CanonicalOffer | undefined>((best, current) => {
+  return offers.reduce<CanonicalOffer | undefined>((best, current) => {
     if (!best || compareByPriceThenDuration(current, best) < 0) {
       return current;
     }
 
     return best;
   }, undefined);
-
-  return {
-    offer,
-    partial: search.partial,
-    warnings: search.warnings,
-  };
 }
 
 export async function resolveLocalCostamarMatrixProgressive(
@@ -4658,12 +4542,15 @@ export async function resolveLocalCostamarMatrixProgressive(
 ): Promise<MatrixResponse> {
   let partial = false;
   let stopRequested = false;
-  const seedResult = await seedMatrixWithFlexibleSearch(request, providerContext).catch(() => ({
-    offers: new Map<string, CanonicalOffer>(),
-    partial: true,
-  }));
-  const seeded = seedResult.offers;
-  partial = seedResult.partial;
+  const refusals: CostamarSearchRejectedError[] = [];
+  /* A seed that fails costs time, not fares: every cell it would have filled is
+     searched on its own below, so it leaves the matrix complete. */
+  const seeded = await seedMatrixWithFlexibleSearch(request, providerContext).catch((error: unknown) => {
+    if (refusesEveryDate(error)) {
+      throw error;
+    }
+    return new Map<string, CanonicalOffer>();
+  });
   const seededKeys = new Set<string>();
   const seededCells = draft.cells.map((cell) => {
     if (cell.confidence !== "loading" || !cell.derivedRequest) {
@@ -4689,11 +4576,14 @@ export async function resolveLocalCostamarMatrixProgressive(
 
   const prioritizedCells = prioritizeMatrixLoadingCells(seededCells, draft.axes, request.tripType)
     .filter((cell) => !stopRequested && !seededKeys.has(cell.key));
+  /* How many cells answered, the seeded ones included, and why each of the
+     others failed. */
+  let answeredCells = seededKeys.size;
+  const failedCells = new Map<string, unknown>();
   const resolvedLoadingCells = await mapConcurrent(prioritizedCells, COSTAMAR_CONCURRENCY.matrixCell, async (cell) => {
     try {
-      const resolution = await resolveCellPrice(cell.derivedRequest, providerContext);
-      partial = partial || resolution.partial;
-      const offer = resolution.offer;
+      const offer = await resolveCellPrice(cell.derivedRequest, providerContext);
+      answeredCells += 1;
       const nextCell = offer
         ? buildMatrixCellFromOffer(cell, offer, providerContext)
         : {
@@ -4701,15 +4591,18 @@ export async function resolveLocalCostamarMatrixProgressive(
             confidence: "unavailable" as const,
             selectable: false,
             stateCode: "chg" as const,
-            tooltip: resolution.partial
-              ? resolution.warnings[0] ?? "Click and Book Plus search was only partially available."
-              : "Click and Book Plus returned no live result for this combination.",
+            tooltip: "Click and Book Plus returned no live result for this combination.",
           } satisfies MatrixCell;
       if (onCellResolved?.(nextCell) === false) {
         stopRequested = true;
       }
       return nextCell;
     } catch (error) {
+      if (refusesEveryDate(error)) {
+        refusals.push(error);
+        return cell;
+      }
+      failedCells.set(cell.key, error);
       partial = true;
       const nextCell = {
         ...cell,
@@ -4724,8 +4617,19 @@ export async function resolveLocalCostamarMatrixProgressive(
       return nextCell;
     }
   }, {
-    canContinue: () => !stopRequested,
+    canContinue: () => !stopRequested && refusals.length === 0,
   });
+
+  const [refusal] = refusals;
+  if (refusal) {
+    throw refusal;
+  }
+
+  /* No cell answered: the provider failed, with the first cell's reason. */
+  const firstFailedCell = prioritizedCells.find((cell) => failedCells.has(cell.key));
+  if (answeredCells === 0 && firstFailedCell) {
+    throw failedCells.get(firstFailedCell.key);
+  }
 
   const resolvedByKey = new Map(resolvedLoadingCells.map((cell) => [cell.key, cell]));
   const resolvedCells = seededCells.map((cell) => resolvedByKey.get(cell.key) ?? cell);
@@ -4757,16 +4661,7 @@ export async function resolveLocalCostamarMatrixProgressive(
   };
 }
 
-export async function buildLocalCostamarMatrix(
-  request: SearchRequest,
-  providerContext: ProviderContext | undefined,
-  providerMeta: ProviderMeta,
-): Promise<MatrixResponse> {
-  const draft = createLocalCostamarMatrixDraft(request, providerMeta);
-  return resolveLocalCostamarMatrixProgressive(request, providerContext, draft);
-}
-
-export function mapCostamarLocationSuggestion(
+function mapCostamarLocationSuggestion(
   entry: CostamarAutocompleteAirport,
 ): LocationSuggestion | undefined {
   const code = entry.code?.trim().toUpperCase();
@@ -4798,38 +4693,31 @@ export async function suggestLocalCostamarLocations(
     return [];
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), COSTAMAR_HTTP_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(
-      `${COSTAMAR_AIR_API_BASE_URL}/autocomplete/airports/search?language=es&query=${encodeURIComponent(normalizedQuery)}`,
-      {
-        headers: {
-          accept: "application/json, text/plain, */*",
-        },
-        signal: controller.signal,
+  /* A station lookup: asked once more when it got no answer (`fetchProvider`). */
+  const response = await fetchProvider(
+    `${COSTAMAR_AIR_API_BASE_URL}/autocomplete/airports/search?language=es&query=${encodeURIComponent(normalizedQuery)}`,
+    {
+      headers: {
+        accept: "application/json, text/plain, */*",
       },
-    );
+    },
+    { label: "Click and Book Plus location suggest", timeoutMs: COSTAMAR_HTTP_TIMEOUT_MS },
+  );
 
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new Error(`Click and Book Plus location suggest failed with HTTP ${response.status}.`);
-    }
-
-    const rawPayload = await response.json() as unknown;
-    const rawAirports = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)
-      ? (rawPayload as { airports?: unknown }).airports
-      : undefined;
-    const airports = Array.isArray(rawAirports)
-      ? rawAirports.filter((entry): entry is CostamarAutocompleteAirport => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry))
-      : [];
-    const suggestions = airports
-      .map((entry) => mapCostamarLocationSuggestion(entry))
-      .filter((entry): entry is LocationSuggestion => Boolean(entry));
-
-    return rankLocationSuggestions(normalizedQuery, suggestions, limit);
-  } finally {
-    clearTimeout(timeout);
+  if (!response.ok) {
+    throw new Error(`Click and Book Plus location suggest failed with HTTP ${response.status}.`);
   }
+
+  const rawPayload = await response.json() as unknown;
+  const rawAirports = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)
+    ? (rawPayload as { airports?: unknown }).airports
+    : undefined;
+  const airports = Array.isArray(rawAirports)
+    ? rawAirports.filter((entry): entry is CostamarAutocompleteAirport => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry))
+    : [];
+  const suggestions = airports
+    .map((entry) => mapCostamarLocationSuggestion(entry))
+    .filter((entry): entry is LocationSuggestion => Boolean(entry));
+
+  return rankLocationSuggestions(normalizedQuery, suggestions, limit);
 }

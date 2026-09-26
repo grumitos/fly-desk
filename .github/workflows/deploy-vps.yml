@@ -33,7 +33,7 @@ jobs:
     name: Validate and build revision
     if: ${{ inputs.mode == 'deploy' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     outputs:
       artifact_digest: ${{ steps.artifact.outputs.digest }}
 
@@ -73,23 +73,11 @@ jobs:
         with:
           bun-version: 1.4.0
 
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 26
-
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Validate application
-        run: |
-          set -euo pipefail
-          bun run typecheck
-          bun run lint
-          bun run build
-          bun run test
-        env:
-          FLY_DESK_TEST_BROWSER_CHANNEL: chrome
+      - name: Build
+        run: bun run build
 
       - name: Build deterministic release artifact
         id: artifact
@@ -97,26 +85,14 @@ jobs:
           REVISION: ${{ inputs.revision }}
         run: |
           set -euo pipefail
-          rm -rf package fly-desk.tar.gz
-          install -d -m 0755 package
-          git archive --format=tar --prefix=app/ "$REVISION" | tar -xf - -C package
-          rm -rf package/app/frontend/dist
-          install -d -m 0755 package/app/frontend
-          cp -R frontend/dist package/app/frontend/dist
-          find package/app/frontend/dist -type d -exec chmod 0755 {} +
-          find package/app/frontend/dist -type f -exec chmod 0644 {} +
-          printf '%s\n' "$REVISION" > package/app/REVISION
-          chmod 0644 package/app/REVISION
-          tar \
-            --sort=name \
-            --mtime='UTC 1970-01-01' \
-            --owner=0 \
-            --group=0 \
-            --numeric-owner \
-            -cf - -C package app | gzip -n > fly-desk.tar.gz
+          rm -f fly-desk.tar.gz
+          bash scripts/pack-release.sh "$REVISION" fly-desk.tar.gz
           digest="$(sha256sum fly-desk.tar.gz | awk '{print $1}')"
           printf '%s' "$digest" | grep -Eq '^[0-9a-f]{64}$'
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke the release artifact
+        run: bun scripts/release-smoke.ts fly-desk.tar.gz
 
       - name: Store immutable release artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

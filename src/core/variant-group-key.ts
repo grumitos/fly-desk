@@ -12,7 +12,7 @@ interface VariantGroupKeyInput {
   itineraries?: Itinerary[];
 }
 
-export interface FlexibleVariantGroupKeyInput {
+interface FlexibleVariantGroupKeyInput {
   mainCarrier?: string;
   validatingCarrier?: string;
   totalAmount: number;

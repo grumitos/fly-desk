@@ -1,9 +1,10 @@
 import { resolveSearchServiceProxyApiToken } from "./service-auth";
+import { envNumber } from "./env";
 
-const SEARCH_SERVICE_PROXY_HEADER = "x-flydesk-search-proxy";
+export const SEARCH_SERVICE_PROXY_HEADER = "x-flydesk-search-proxy";
 const DEFAULT_SEARCH_SERVICE_TIMEOUT_MS = 15_000;
 const MIN_ENV_SEARCH_SERVICE_TIMEOUT_MS = DEFAULT_SEARCH_SERVICE_TIMEOUT_MS;
-const MAX_SEARCH_SERVICE_TIMEOUT_MS = 60_000;
+export const MAX_SEARCH_SERVICE_TIMEOUT_MS = 60_000;
 const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
   "connection",
   "keep-alive",
@@ -23,15 +24,6 @@ interface ProxySearchServiceOptions {
   fetchImpl?: FetchImpl;
 }
 
-function numberFromEnv(name: string, fallback: number, min: number, max: number): number {
-  const raw = Number(process.env[name] ?? "");
-  if (!Number.isFinite(raw)) {
-    return fallback;
-  }
-
-  return Math.max(min, Math.min(max, Math.trunc(raw)));
-}
-
 function isLoopbackHostname(hostname: string): boolean {
   const normalized = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
   return normalized === "localhost"
@@ -40,7 +32,7 @@ function isLoopbackHostname(hostname: string): boolean {
     || normalized === "0:0:0:0:0:0:0:1";
 }
 
-export function resolveSearchServiceBaseUrl(input = process.env.FLY_DESK_SEARCH_SERVICE_URL): URL | undefined {
+function resolveSearchServiceBaseUrl(input = process.env.FLY_DESK_SEARCH_SERVICE_URL): URL | undefined {
   const raw = input?.trim();
   if (!raw) {
     return undefined;
@@ -87,6 +79,9 @@ export function isSearchServiceRoute(method: string, pathname: string): boolean 
     return true;
   }
   if (normalizedMethod === "GET" && pathname === "/api/provider-status") {
+    return true;
+  }
+  if (normalizedMethod === "GET" && pathname === "/api/search-capacity") {
     return true;
   }
   if (normalizedMethod === "GET" && /^\/api\/search\/[^/]+$/.test(pathname)) {
@@ -150,32 +145,24 @@ function resolveSearchServiceTimeoutMs(input?: number): number {
     return Math.max(1, Math.min(MAX_SEARCH_SERVICE_TIMEOUT_MS, Math.trunc(input)));
   }
 
-  return numberFromEnv(
+  return Math.trunc(envNumber(
     "FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS",
     DEFAULT_SEARCH_SERVICE_TIMEOUT_MS,
-    MIN_ENV_SEARCH_SERVICE_TIMEOUT_MS,
-    MAX_SEARCH_SERVICE_TIMEOUT_MS,
-  );
+    { min: MIN_ENV_SEARCH_SERVICE_TIMEOUT_MS, max: MAX_SEARCH_SERVICE_TIMEOUT_MS },
+  ));
 }
 
 /**
- * How long this hop waits, for a request that asks the runner to wait too.
- *
- * A job poll carries `wait=<ms>`: the runner holds the response until the job
- * moves or that long passes, so the answer is *expected* not to arrive for the
- * length of the hold. The base timeout is the budget for the request itself —
- * the round trip and a body that can be thousands of offers — and the hold is
- * on top of it. Taking the base alone put a 15s abort against a 15s hold and
- * made the outcome a race the proxy usually won: a search whose providers went
- * quiet for fifteen seconds reached the agent as «Search service is
- * unavailable» while the runner was still working, and any client asking for
- * the 20s the runner permits failed every time.
- *
- * Read from the request rather than from a shared constant, so this cannot go
- * stale the next time the runner's ceiling moves: whatever hold is being asked
- * for is the hold this timeout covers.
+ * How long this hop waits. A job poll carries `wait=<ms>`, and the runner holds
+ * the answer for that long, so the hold is added to the base budget. A
+ * quotation revalidates the fare with a live provider search, which gets the
+ * whole ceiling: the runner stops it before this hop gives up.
  */
 export function resolveProxyTimeoutMsForRequest(url: URL, configured?: number): number {
+  if (url.pathname === "/api/quotation") {
+    return MAX_SEARCH_SERVICE_TIMEOUT_MS;
+  }
+
   const base = resolveSearchServiceTimeoutMs(configured);
   const requestedWait = Number.parseInt(url.searchParams.get("wait") ?? "", 10);
   if (!Number.isFinite(requestedWait) || requestedWait <= 0) {
@@ -183,6 +170,33 @@ export function resolveProxyTimeoutMsForRequest(url: URL, configured?: number): 
   }
 
   return Math.min(MAX_SEARCH_SERVICE_TIMEOUT_MS, base + requestedWait);
+}
+
+/* A runner that is restarting refuses connections for a moment. A read is
+   asked once more after this pause; a write is never sent twice. */
+const REFUSED_READ_RETRY_DELAY_MS = 500;
+
+function isConnectionRefused(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === "ConnectionRefused" || code === "ECONNREFUSED";
+}
+
+async function fetchSearchService(
+  fetchImpl: FetchImpl,
+  target: URL,
+  init: RequestInit,
+  isRead: boolean,
+): Promise<Response> {
+  try {
+    return await fetchImpl(target, init);
+  } catch (error) {
+    if (!isRead || !isConnectionRefused(error)) {
+      throw error;
+    }
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, REFUSED_READ_RETRY_DELAY_MS));
+  return fetchImpl(target, init);
 }
 
 function searchServiceUnavailableResponse(): Response {
@@ -243,16 +257,26 @@ export async function maybeProxySearchServiceRequest(
 
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   const body = hasBody ? request.body : undefined;
+  const timeout = AbortSignal.timeout(resolveProxyTimeoutMsForRequest(url, options.timeoutMs));
   const requestInit: RequestInit & { duplex?: "half" } = {
     method: request.method,
     headers,
     body,
-    signal: AbortSignal.timeout(resolveProxyTimeoutMsForRequest(url, options.timeoutMs)),
+    /* A read the browser gives up on (a long poll whose page moved on) ends
+       here too, so the runner does not hold it for nobody. A write is left to
+       finish: the job it creates or stops must not depend on who waits. */
+    signal: hasBody ? timeout : AbortSignal.any([timeout, request.signal]),
     duplex: body ? "half" : undefined,
+    /* Every request on a connection of its own. Bun's fetch keeps an idle
+       connection until the runner closes it and can hand it out as that close
+       arrives; the request then dies unanswered, and a write, such as the
+       start of a search, cannot be sent twice. On loopback a new connection
+       costs about half a millisecond. */
+    keepalive: false,
   };
 
   try {
-    const response = await (options.fetchImpl ?? fetch)(target, requestInit);
+    const response = await fetchSearchService(options.fetchImpl ?? fetch, target, requestInit, request.method === "GET");
 
     return new Response(response.body, {
       status: response.status,
@@ -260,7 +284,10 @@ export async function maybeProxySearchServiceRequest(
       headers: responseHeadersFromProxy(response),
     });
   } catch (error) {
-    logSearchServiceProxyFailure(error, target, request, hasApiToken);
+    /* Nobody is left to answer, and nothing failed. */
+    if (!request.signal.aborted) {
+      logSearchServiceProxyFailure(error, target, request, hasApiToken);
+    }
     return searchServiceUnavailableResponse();
   }
 }

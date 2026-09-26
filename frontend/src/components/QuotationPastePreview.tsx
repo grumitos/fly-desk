@@ -1,5 +1,6 @@
 import { AppIcon } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
+import { formatCount, plural } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { SearchRequest } from "@/types"
 import type {
@@ -38,8 +39,8 @@ export function QuotationPastePreview({
       <section className="fd-quotation-paste-source">
         <div className="fd-quotation-paste-section-head">
           <span className="fd-type-micro">Texto recibido</span>
-          <span className="fd-mono text-xs font-semibold text-muted-foreground">
-            {lineCount.toLocaleString("es-PE")} líneas
+          <span className="fd-tabular text-xs font-semibold text-muted-foreground">
+            {formatCount(lineCount)} {plural(lineCount, "línea")}
           </span>
         </div>
         <pre className="fd-quotation-paste-text">{text}</pre>
@@ -50,12 +51,7 @@ export function QuotationPastePreview({
           <span className="fd-type-micro">Búsqueda reconstruida</span>
           <span className="fd-paste-read-count">
             <AppIcon name="check" size={12} />
-            {/* The two figures are the system's counter and the rest is prose.
-                The sentence stays inside one element rather than becoming four
-                children of the badge: the badge is `inline-flex`, so every
-                child of it is separated by its 5px gap, and a sentence laid out
-                by the gap that holds an icon off its label is not a sentence
-                any more. */}
+            {/* One element: the badge is `inline-flex` and would space the words with its gap. */}
             <span>
               <span className="fd-count">{readCount}</span> de{" "}
               <span className="fd-count">{fields.length}</span> campos leídos
@@ -95,12 +91,12 @@ export function QuotationPastePreview({
             <span>La tarifa del texto no se reutiliza: se busca de nuevo</span>
           </p>
           <div className="flex items-center gap-2">
-            <Button type="button" variant="secondary" className="h-9" onClick={() => onReview(draft)}>
+            <Button type="button" variant="secondary" onClick={() => onReview(draft)}>
               Revisar campos
             </Button>
             <Button
               type="button"
-              className="h-9 flex-1"
+              className="flex-1"
               disabled={!canSearch}
               title={canSearch ? undefined : "Revisa los campos ausentes antes de buscar"}
               onClick={() => onSearch(draft)}
@@ -266,9 +262,9 @@ function sourceLine<T>(text: string, field: TracedQuotationField<T>): string {
 
 function passengerLabel(passengers: { adults?: number; children?: number; infants?: number }): string {
   const parts = [
-    passengers.adults ? `${passengers.adults} adulto${passengers.adults === 1 ? "" : "s"}` : "",
-    passengers.children ? `${passengers.children} niño${passengers.children === 1 ? "" : "s"}` : "",
-    passengers.infants ? `${passengers.infants} bebé${passengers.infants === 1 ? "" : "s"}` : "",
+    passengers.adults ? `${passengers.adults} ${plural(passengers.adults, "adulto")}` : "",
+    passengers.children ? `${passengers.children} ${plural(passengers.children, "niño")}` : "",
+    passengers.infants ? `${passengers.infants} ${plural(passengers.infants, "bebé")}` : "",
   ].filter(Boolean)
   return parts.join(" · ") || "1 adulto"
 }

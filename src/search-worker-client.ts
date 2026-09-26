@@ -22,24 +22,32 @@ export interface ProviderSearchResult {
   incremental?: boolean;
 }
 
-export interface ProviderSearchWorkerInput {
+/*
+ * How a job is stopped. `signal` is the job's own stop, heard at once;
+ * `shouldContinue` is asked every `CANCELLATION_POLL_INTERVAL_MS` and catches
+ * a job that left the running state without its signal.
+ */
+interface WorkerJobStop {
+  signal?: AbortSignal;
+  shouldContinue?: () => boolean;
+}
+
+interface ProviderSearchWorkerInput extends WorkerJobStop {
   kind: "exact" | "range";
   providerId: ProviderId;
   request: SearchRequest;
   providerContext?: ProviderContext;
   onProgress?: (result: ProviderSearchResult) => boolean | void;
   onProviderEvent?: (event: ProviderDiagnosticEvent) => void;
-  shouldContinue?: () => boolean;
 }
 
-export interface ProviderMatrixWorkerInput {
+interface ProviderMatrixWorkerInput extends WorkerJobStop {
   providerId: ProviderId;
   request: SearchRequest;
   providerContext?: ProviderContext;
   draft: MatrixResponse;
   onCellResolved?: (cell: MatrixCell) => boolean | void;
   onProviderEvent?: (event: ProviderDiagnosticEvent) => void;
-  shouldContinue?: () => boolean;
 }
 
 interface WorkerHandle {
@@ -49,13 +57,53 @@ interface WorkerHandle {
 const POOLED_PROVIDER_IDS = ["agil-local", "costamar"] as const satisfies readonly ProviderId[];
 const DEFAULT_SEARCH_WORKER_MAX_JOBS = 500;
 const CANCELLATION_POLL_INTERVAL_MS = 500;
+/* A hang guard, not a budget: a month of a migratory sweep is the longest
+   legitimate job and takes a few minutes. Past this the job is cancelled and
+   its search capacity released. */
+const DEFAULT_SEARCH_WORKER_JOB_TIMEOUT_MS = 10 * 60_000;
+const WORKER_LOG_LINE_MAX_CHARS = 400;
+
+function searchWorkerJobTimeoutMs(): number {
+  const raw = Number(process.env.FLY_DESK_SEARCH_WORKER_JOB_TIMEOUT_MS ?? DEFAULT_SEARCH_WORKER_JOB_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : DEFAULT_SEARCH_WORKER_JOB_TIMEOUT_MS;
+}
+
+function workerJobTimeoutError(): Error {
+  return new Error("Search worker job exceeded its deadline.");
+}
+
+/* Provider errors can carry URLs with tokens in them, so a worker's stderr
+   reaches the journal with URLs cut to their origin and token-shaped strings
+   removed. */
+function redactWorkerLogLine(line: string): string {
+  return line
+    .replace(/https?:\/\/[^\s"'<>]+/g, (url) => {
+      try {
+        return new URL(url).origin;
+      } catch {
+        return "<url>";
+      }
+    })
+    .replace(/[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{8,}/g, "<jwt>")
+    .replace(/[A-Za-z0-9+/_=-]{40,}/g, "<redacted>")
+    .slice(0, WORKER_LOG_LINE_MAX_CHARS);
+}
+
+/* Resolves, once the stream ends, with whether the worker wrote anything. */
+function forwardWorkerStderr(stream: ReadableStream<Uint8Array>, providerId: ProviderId): Promise<boolean> {
+  let emitted = false;
+  return readLines(stream, (line) => {
+    emitted = true;
+    console.warn(`[search-worker ${providerId}] ${redactWorkerLogLine(line)}`);
+  }).then(() => emitted, () => emitted);
+}
 
 function searchWorkerProcessesEnabled(): boolean {
   return process.env.FLY_DESK_SEARCH_WORKER_PROCESSES !== "0";
 }
 
-/* The pool is the default path; `0` restores the spawn-per-search behaviour,
-   which stays in `runInWorker` untouched so it remains a working escape hatch. */
+/* The pool is the default path; `0` spawns one worker per search through
+   `runInWorker`, which is kept as a working escape hatch. */
 export function searchWorkerPoolEnabled(): boolean {
   return searchWorkerProcessesEnabled()
     && String(process.env.FLY_DESK_SEARCH_WORKER_POOL ?? "1").trim() !== "0";
@@ -65,6 +113,15 @@ function searchWorkerMaxJobs(): number {
   const raw = Number(process.env.FLY_DESK_SEARCH_WORKER_MAX_JOBS ?? DEFAULT_SEARCH_WORKER_MAX_JOBS);
   return Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : DEFAULT_SEARCH_WORKER_MAX_JOBS;
 }
+
+/*
+ * A worker runs with Bun's small heap (`--smol`), which collects more often:
+ * it only relays each day's fares to the runner, and in the runner's memory
+ * limit it then gives back what a month took. Measured over a two-month sweep
+ * beside another agent's range, the two workers held 199 MiB between searches
+ * without it and 139 MiB with it.
+ */
+const WORKER_BUN_FLAGS = ["--smol", "--no-env-file"] as const;
 
 function resolveWorkerPath(): string | undefined {
   const workerPath = join(process.cwd(), "src", "search-worker.ts");
@@ -124,10 +181,6 @@ function resolveBunExecutable(options: BunExecutableResolverOptions = {}): strin
   return candidates.find((candidate) => candidate && pathExists(candidate)) ?? "bun";
 }
 
-export function resolveSearchWorkerBunExecutableForTests(options: BunExecutableResolverOptions): string {
-  return resolveBunExecutable(options);
-}
-
 export function searchWorkerPathAvailable(): boolean {
   return resolveWorkerPath() !== undefined;
 }
@@ -149,13 +202,22 @@ function parseWorkerMessage(line: string): ProviderSearchWorkerMessage | undefin
   }
 }
 
-async function readJsonLines(
+async function readLines(
   stream: ReadableStream<Uint8Array>,
   onLine: (line: string) => void,
 ): Promise<void> {
+  /* A progress message can be megabytes, so a partial line is kept as chunks
+     and only the newest chunk is searched for the newline. */
   const reader = stream.getReader();
   const decoder = new TextDecoder();
-  let buffer = "";
+  let pending: string[] = [];
+
+  const emit = (line: string) => {
+    const trimmed = line.trim();
+    if (trimmed) {
+      onLine(trimmed);
+    }
+  };
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -163,41 +225,41 @@ async function readJsonLines(
       break;
     }
 
-    buffer += decoder.decode(value, { stream: true });
-    for (;;) {
-      const newlineIndex = buffer.indexOf("\n");
-      if (newlineIndex === -1) {
-        break;
-      }
-
-      const line = buffer.slice(0, newlineIndex).trim();
-      buffer = buffer.slice(newlineIndex + 1);
-      if (line) {
-        onLine(line);
-      }
+    const chunk = decoder.decode(value, { stream: true });
+    let start = 0;
+    let newlineIndex = chunk.indexOf("\n");
+    while (newlineIndex !== -1) {
+      pending.push(chunk.slice(start, newlineIndex));
+      emit(pending.join(""));
+      pending = [];
+      start = newlineIndex + 1;
+      newlineIndex = chunk.indexOf("\n", start);
+    }
+    if (start < chunk.length) {
+      pending.push(chunk.slice(start));
     }
   }
 
-  buffer += decoder.decode();
-  const tail = buffer.trim();
-  if (tail) {
-    onLine(tail);
-  }
+  pending.push(decoder.decode());
+  emit(pending.join(""));
 }
 
 function runInWorker(
   input: ProviderSearchWorkerRequest,
   onMessage: (message: ProviderSearchWorkerMessage, child: WorkerHandle) => void,
-  shouldContinue?: () => boolean,
+  { signal, shouldContinue }: WorkerJobStop = {},
 ): Promise<ProviderSearchWorkerMessage> {
   const workerPath = resolveWorkerPath();
   if (!searchWorkerProcessesEnabled() || !workerPath) {
     return Promise.reject(new Error("Search worker processes are disabled or unavailable."));
   }
+  if (signal?.aborted) {
+    return Promise.reject(new Error("Search worker cancelled."));
+  }
 
   return new Promise((resolve, reject) => {
     const bunExecutable = resolveBunExecutable();
-    const child = Bun.spawn([bunExecutable, workerPath], {
+    const child = Bun.spawn([bunExecutable, ...WORKER_BUN_FLAGS, workerPath], {
       cwd: process.cwd(),
       env: {
         ...process.env,
@@ -217,6 +279,7 @@ function runInWorker(
       },
     };
 
+    const stopOnSignal = () => finish(() => reject(new Error("Search worker cancelled.")));
     const finish = (callback: () => void) => {
       if (settled) {
         return;
@@ -225,9 +288,14 @@ function runInWorker(
       if (cancellationTimer) {
         clearInterval(cancellationTimer);
       }
+      clearTimeout(deadline);
+      signal?.removeEventListener("abort", stopOnSignal);
       callback();
       child.kill();
     };
+    const deadline = setTimeout(() => finish(() => reject(workerJobTimeoutError())), searchWorkerJobTimeoutMs());
+    deadline.unref?.();
+    signal?.addEventListener("abort", stopOnSignal, { once: true });
 
     if (shouldContinue) {
       cancellationTimer = setInterval(() => {
@@ -245,8 +313,8 @@ function runInWorker(
       cancellationTimer.unref?.();
     }
 
-    const stderrPromise = new Response(child.stderr).text();
-    const stdoutDrained = readJsonLines(child.stdout, (line) => {
+    const stderrPromise = forwardWorkerStderr(child.stderr, input.providerId);
+    const stdoutDrained = readLines(child.stdout, (line) => {
       const message = parseWorkerMessage(line);
       if (!message || message.id !== input.id) {
         return;
@@ -263,19 +331,15 @@ function runInWorker(
     });
 
     void Promise.resolve(child.exited).then(async (code) => {
-      /* A worker writes its answer to stdout and then exits, and those are two
-         events this process can observe in either order. On a loaded machine
-         the exit arrives first often enough to matter, and answering it
-         immediately reports "the worker stopped" over a provider error the
-         worker had already sent — which is how the reason a search failed gets
-         replaced by the fact that it did. Reading what is left first costs
-         nothing: this path only runs when the process is already gone. */
+      /* The answer on stdout and the exit can arrive in either order; reading
+         what is left first keeps a provider error from being reported as "the
+         worker stopped". */
       await stdoutDrained;
       if (settled) {
         return;
       }
 
-      const hadDiagnostics = Boolean((await stderrPromise).trim());
+      const hadDiagnostics = await stderrPromise;
       finish(() => reject(new Error(
         `Search worker stopped before completing (exit code ${code ?? "unknown"}).${hadDiagnostics ? " Worker diagnostics were emitted." : ""}`,
       )));
@@ -300,13 +364,13 @@ function runInWorker(
  * process per search throws away every time.
  * ------------------------------------------------------------------------ */
 
-export interface SearchWorkerChildStdin {
+interface SearchWorkerChildStdin {
   write: (chunk: Uint8Array) => unknown;
   end: () => unknown;
   flush?: () => unknown;
 }
 
-export interface SearchWorkerChild {
+interface SearchWorkerChild {
   readonly pid?: number;
   readonly stdin: SearchWorkerChildStdin;
   readonly stdout: ReadableStream<Uint8Array>;
@@ -315,18 +379,18 @@ export interface SearchWorkerChild {
   kill: () => void;
 }
 
-export type SearchWorkerSpawn = (providerId: ProviderId) => SearchWorkerChild;
+type SearchWorkerSpawn = (providerId: ProviderId) => SearchWorkerChild;
 
-export interface SearchWorkerPool {
+interface SearchWorkerPool {
   run: (
     input: ProviderSearchWorkerRequest,
     onMessage: (message: ProviderSearchWorkerMessage, child: WorkerHandle) => void,
-    shouldContinue?: () => boolean,
+    stop?: WorkerJobStop,
   ) => Promise<ProviderSearchWorkerMessage>;
   prewarm: (providerId: ProviderId) => Promise<void>;
   start: () => void;
-  stop: () => void;
-  workerPidForTests: (providerId: ProviderId) => number | undefined;
+  /** Resolves once every worker has exited. */
+  stop: () => Promise<void>;
 }
 
 interface PooledJob {
@@ -336,6 +400,8 @@ interface PooledJob {
   resolve: (message: ProviderSearchWorkerMessage) => void;
   reject: (error: Error) => void;
   timer?: ReturnType<typeof setInterval>;
+  deadline?: ReturnType<typeof setTimeout>;
+  detach?: () => void;
 }
 
 interface PooledWorker {
@@ -344,7 +410,7 @@ interface PooledWorker {
   jobs: Map<string, PooledJob>;
   completedJobs: number;
   retiring: boolean;
-  stderr: Promise<string>;
+  stderr: Promise<boolean>;
 }
 
 interface SearchWorkerPoolOptions {
@@ -388,13 +454,15 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
     if (job.timer) {
       clearInterval(job.timer);
     }
+    clearTimeout(job.deadline);
+    job.detach?.();
     worker.jobs.delete(job.id);
     worker.completedJobs += 1;
     complete();
     maybeRecycle(worker);
   };
 
-  const cancelJob = (worker: PooledWorker, job: PooledJob): void => {
+  const cancelJob = (worker: PooledWorker, job: PooledJob, reason = new Error("Search worker cancelled.")): void => {
     if (job.settled) {
       return;
     }
@@ -407,7 +475,7 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
            below is what the caller needs either way. */
       }
     }
-    settleJob(worker, job, () => job.reject(new Error("Search worker cancelled.")));
+    settleJob(worker, job, () => job.reject(reason));
   };
 
   const deliver = (worker: PooledWorker, job: PooledJob, message: ProviderSearchWorkerMessage): void => {
@@ -441,11 +509,11 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
       jobs: new Map(),
       completedJobs: 0,
       retiring: false,
-      stderr: new Response(child.stderr).text().catch(() => ""),
+      stderr: forwardWorkerStderr(child.stderr, providerId),
     };
     workers.set(providerId, worker);
 
-    const stdoutDrained = readJsonLines(child.stdout, (line) => {
+    const stdoutDrained = readLines(child.stdout, (line) => {
       const message = parseWorkerMessage(line);
       if (!message) {
         return;
@@ -472,7 +540,7 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
         return;
       }
 
-      const hadDiagnostics = Boolean((await worker.stderr).trim());
+      const hadDiagnostics = await worker.stderr;
       const error = new Error(
         `Search worker stopped before completing (exit code ${code ?? "unknown"}).${hadDiagnostics ? " Worker diagnostics were emitted." : ""}`,
       );
@@ -489,8 +557,13 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
     payload: ProviderSearchWorkerInbound,
     id: string,
     onMessage: (message: ProviderSearchWorkerMessage, child: WorkerHandle) => void,
-    shouldContinue?: () => boolean,
+    { signal, shouldContinue }: WorkerJobStop = {},
   ): Promise<ProviderSearchWorkerMessage> => new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Search worker cancelled."));
+      return;
+    }
+
     let worker: PooledWorker;
     try {
       worker = ensureWorker(providerId);
@@ -511,6 +584,8 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
     };
     job.onMessage = (message) => onMessage(message, handle);
     worker.jobs.set(id, job);
+    job.deadline = setTimeout(() => cancelJob(worker, job, workerJobTimeoutError()), searchWorkerJobTimeoutMs());
+    job.deadline.unref?.();
 
     if (shouldContinue) {
       const timer = setInterval(() => {
@@ -528,6 +603,11 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
       timer.unref?.();
       job.timer = timer;
     }
+    if (signal) {
+      const stop = () => cancelJob(worker, job);
+      signal.addEventListener("abort", stop, { once: true });
+      job.detach = () => signal.removeEventListener("abort", stop);
+    }
 
     try {
       writeToWorker(worker, payload);
@@ -537,8 +617,8 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
   });
 
   return {
-    run: (input, onMessage, shouldContinue) =>
-      submit(input.providerId, input, input.id, onMessage, shouldContinue),
+    run: (input, onMessage, stop) =>
+      submit(input.providerId, input, input.id, onMessage, stop),
     prewarm: async (providerId) => {
       const id = crypto.randomUUID();
       const result = await submit(
@@ -561,19 +641,21 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
         }
       });
     },
-    stop: () => {
-      [...workers.values()].forEach((worker) => {
-        workers.delete(worker.providerId);
-        worker.retiring = true;
-        worker.child.kill();
-      });
-    },
-    workerPidForTests: (providerId) => workers.get(providerId)?.child.pid,
+    /* Closing its input and signalling it both tell a worker to stop now,
+       whichever reaches it first: one already signalled with the unit is
+       waiting for exactly this (`src/search-worker.ts`). */
+    stop: () => Promise.all([...workers.values()].map((worker) => {
+      workers.delete(worker.providerId);
+      worker.retiring = true;
+      try {
+        worker.child.stdin.end();
+      } catch {
+        /* Already closed: the signal below is enough. */
+      }
+      worker.child.kill();
+      return Promise.resolve(worker.child.exited).then(() => undefined, () => undefined);
+    })).then(() => undefined),
   };
-}
-
-export function createSearchWorkerPoolForTests(options: SearchWorkerPoolOptions): SearchWorkerPool {
-  return createSearchWorkerPool(options);
 }
 
 function spawnSearchWorkerProcess(): SearchWorkerChild {
@@ -583,7 +665,7 @@ function spawnSearchWorkerProcess(): SearchWorkerChild {
   }
 
   const bunExecutable = resolveBunExecutable();
-  return Bun.spawn([bunExecutable, workerPath], {
+  return Bun.spawn([bunExecutable, ...WORKER_BUN_FLAGS, workerPath], {
     cwd: process.cwd(),
     env: {
       ...process.env,
@@ -616,9 +698,11 @@ export function startSearchWorkerPool(): void {
   getDefaultPool().start();
 }
 
-export function stopSearchWorkerPool(): void {
-  defaultPool?.stop();
+/** Stops the pooled workers; resolves once they have exited. */
+export function stopSearchWorkerPool(): Promise<void> {
+  const stopped = defaultPool?.stop() ?? Promise.resolve();
   defaultPool = undefined;
+  return stopped;
 }
 
 export async function prewarmProviderInWorker(providerId: ProviderId): Promise<void> {
@@ -628,19 +712,15 @@ export async function prewarmProviderInWorker(providerId: ProviderId): Promise<v
   await getDefaultPool().prewarm(providerId);
 }
 
-export function searchWorkerPoolPidForTests(providerId: ProviderId): number | undefined {
-  return defaultPool?.workerPidForTests(providerId);
-}
-
 function runProviderWorkerJob(
   input: ProviderSearchWorkerRequest,
   onMessage: (message: ProviderSearchWorkerMessage, child: WorkerHandle) => void,
-  shouldContinue?: () => boolean,
+  stop: WorkerJobStop,
 ): Promise<ProviderSearchWorkerMessage> {
   if (poolIsUsable()) {
-    return getDefaultPool().run(input, onMessage, shouldContinue);
+    return getDefaultPool().run(input, onMessage, stop);
   }
-  return runInWorker(input, onMessage, shouldContinue);
+  return runInWorker(input, onMessage, stop);
 }
 
 export async function runProviderSearchInWorker(input: ProviderSearchWorkerInput): Promise<ProviderSearchResult> {
@@ -673,7 +753,7 @@ export async function runProviderSearchInWorker(input: ProviderSearchWorkerInput
         child.kill();
       }
     },
-    input.shouldContinue,
+    { signal: input.signal, shouldContinue: input.shouldContinue },
   );
 
   if (result.type !== "search-complete") {
@@ -713,7 +793,7 @@ export async function runProviderMatrixInWorker(input: ProviderMatrixWorkerInput
         child.kill();
       }
     },
-    input.shouldContinue,
+    { signal: input.signal, shouldContinue: input.shouldContinue },
   );
 
   if (result.type !== "matrix-complete") {

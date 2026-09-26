@@ -5,25 +5,24 @@ import { Database } from "bun:sqlite";
 const LOCATION_USAGE_CARD_LIMIT = 3;
 const LOCATION_USAGE_SQLITE_BUSY_TIMEOUT_MS = 5_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
-/* A month, not a day. A day is shorter than the gap between two ordinary
-   working sessions, so the strip an agent had built up was routinely empty
-   again by the next morning. A month keeps a useful average over time and
-   still lets a route that stopped being searched fall out of it. */
-export const LOCATION_USAGE_RECENT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-export const LOCATION_USAGE_RECENT_MAX_ENTRIES = 2_048;
+/* A month, not a day: a day is shorter than the gap between two ordinary
+   working sessions, so the strip would be empty again every morning. A month
+   keeps a useful average over time and still lets a route that stopped being
+   searched fall out of it. */
+const LOCATION_USAGE_RECENT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const LOCATION_USAGE_RECENT_MAX_ENTRIES = 2_048;
 
-/* «La idea de mantener una media es que el conteo expire en un mes»: a use
-   counts towards the ranking for a month and then stops counting, so a station
-   searched thirty times last month and ten times this one stands behind a
-   station searched twenty times this month. The window is a different concern
-   from `LOCATION_USAGE_RECENT_TTL_MS` — that one is how long a route stays on
-   one browser's «Recientes» strip — so it is a separate constant and a separate
-   option even though the two happen to hold the same length today.
+/* A use counts towards the ranking for a month and then stops counting, so a
+   station searched thirty times last month and ten times this one stands
+   behind a station searched twenty times this month. The window is a different
+   concern from `LOCATION_USAGE_RECENT_TTL_MS` — that one is how long a route
+   stays on one browser's «Recientes» strip — so it is a separate constant and a
+   separate option even though the two hold the same length.
 
    It is counted in whole days rather than milliseconds because the buckets it
    reads are whole days; an option in milliseconds would promise a resolution
    the storage does not have. */
-export const LOCATION_USAGE_RANKING_WINDOW_DAYS = 30;
+const LOCATION_USAGE_RANKING_WINDOW_DAYS = 30;
 
 const CREATE_LOCATION_USAGE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS location_usage (
@@ -36,17 +35,15 @@ const CREATE_LOCATION_USAGE_TABLE_SQL = `
 `;
 
 /* One row per station per day, which is what makes an expiry possible at all:
-   an individual use cannot be taken back out of a running total, so
-   `total_uses` could only ever grow and the leading cards were settled for
-   good — MAD stands at 1425 on this deployment and outranks everything for as
-   long as it is searched once a month, however cold the route has gone.
+   an individual use cannot be taken back out of a running total such as
+   `total_uses`, which only ever grows.
 
    Per day rather than per use: the table stays bounded (stations seen in the
-   window × 31 rows, some 2,700 at today's volume, against an unbounded row per
-   search), the ranking is one grouped scan of it, and a use leaves the count at
-   a day boundary instead of blinking out mid-afternoon on its thirtieth day.
-   `day` is the UTC day number — monotone, and the same integer in the web unit
-   and in the runner whatever the host's timezone is. */
+   window × 31 rows, against an unbounded row per search), the ranking is one
+   grouped scan of it, and a use leaves the count at a day boundary instead of
+   blinking out mid-afternoon on its thirtieth day. `day` is the UTC day number
+   — monotone, and the same integer in the web unit and in the runner whatever
+   the host's timezone is. */
 const CREATE_LOCATION_USAGE_DAILY_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS location_usage_daily (
     role TEXT NOT NULL,
@@ -66,9 +63,9 @@ const CREATE_LOCATION_USAGE_DAILY_INDEX_SQL = `
     ON location_usage_daily (role, day, code, uses);
 `;
 
-/* `total_uses` orders nothing any more. The column stays — it is the honest
-   lifetime figure, and rewriting a live table to remove it would buy nothing —
-   but the index that existed only to serve that ordering goes. */
+/* Nothing orders by `total_uses`, so the index that served that ordering is
+   dropped. The column stays: it is the honest lifetime figure, and rewriting a
+   live table to remove it would buy nothing. */
 const DROP_LOCATION_USAGE_RANK_INDEX_SQL = `
   DROP INDEX IF EXISTS idx_location_usage_role_rank;
 `;
@@ -107,7 +104,7 @@ export interface LocationUsageSuggestionGroups {
   recent: LocationUsageSuggestions;
 }
 
-export interface LocationUsageStoreOptions {
+interface LocationUsageStoreOptions {
   dbPath?: string;
   rankingWindowDays?: number;
   recentTtlMs?: number;
@@ -216,11 +213,10 @@ export function normalizeLocationUsageSessionId(value: unknown): string | undefi
 
 /* Even a falling counter admits nobody quickly: a station the desk searched
    twenty times this month is a month of searching away from a station searched
-   once. That is «una búsqueda bastaría para agregar otro comodín, y probándolo
-   no aparece» exactly. So the last slot of each role answers to recency rather
-   than to the count: the stations the desk really lives on hold the slots above
-   it, and one executed search — from any browser, any process — puts a new
-   station on the row for everybody, at once. */
+   once. So the last slot of each role answers to recency rather than to the
+   count: the stations the desk really lives on hold the slots above it, and one
+   executed search — from any browser, any process — puts a new station on the
+   row for everybody, at once. */
 function withNewestCard(
   leaders: readonly string[],
   newest: string | undefined,
@@ -449,16 +445,6 @@ export class LocationUsageStore {
     };
   }
 
-  clearForTests(): void {
-    this.entries.clear();
-    this.recentEntries.clear();
-    if (this.db) {
-      runSql(this.db, "DELETE FROM location_usage");
-      runSql(this.db, "DELETE FROM location_usage_daily");
-      runSql(this.db, "DELETE FROM location_recent_usage");
-    }
-  }
-
   close(): void {
     if (this.db && !this.closed) {
       try {
@@ -485,12 +471,10 @@ export class LocationUsageStore {
       ${CREATE_LOCATION_RECENT_USAGE_TABLE_SQL}
     `);
     this.removeLegacyRecentUsageColumn();
-    /* `CREATE TABLE IF NOT EXISTS` and a dropped index: a database written
-       before the window existed opens, keeps every row it had, and starts
-       filling `location_usage_daily` from the next search. Nothing is seeded
-       from `total_uses` — there is no way to know when those uses happened, and
-       dating them all to `last_used_at_ms` would drop the whole backlog onto
-       one day and hand it the window it is meant to lose. */
+    /* `location_usage_daily` is never seeded from `total_uses`: there is no way
+       to know when those uses happened, and dating them all to
+       `last_used_at_ms` would drop the whole backlog onto one day and hand it
+       the window it is meant to lose. */
     this.db.exec(DROP_LOCATION_USAGE_RANK_INDEX_SQL);
     this.db.exec(CREATE_LOCATION_USAGE_DAILY_INDEX_SQL);
     this.db.exec(CREATE_LOCATION_USAGE_NEWEST_INDEX_SQL);
@@ -599,10 +583,9 @@ export class LocationUsageStore {
     });
   }
 
-  /* The same bound the sqlite path keeps, so a runtime configured without a
-     `dbPath` cannot quietly go on ranking by lifetime totals. The entry itself
-     survives an empty map: `lastUsedAtMs` is what the newest card reads, and
-     the persisted `location_usage` row is not deleted either. */
+  /* The same bound the sqlite path keeps. The entry itself survives an empty
+     map: `lastUsedAtMs` is what the newest card reads, and the persisted
+     `location_usage` row is not deleted either. */
   private pruneMemoryDailyUses(nowMs: number): void {
     const cutoffDay = this.cutoffDayFor(nowMs);
     for (const entry of this.entries.values()) {

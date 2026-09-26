@@ -10,8 +10,7 @@ import { timeZoneForIataCode } from "./airport-time-zones";
  *  - Between two *different* airports, only the clock catalogue can answer.
  *    Subtracting the digits measures the calendar, not the flight.
  *  - Between an arrival and the next departure at the *same* airport the digits
- *    are enough: one clock, so whatever it is, it cancels. That is a layover,
- *    and it is why the layover figures were right all along.
+ *    are enough: one clock, so whatever it is, it cancels. That is a layover.
  *  - A provider's own elapsed time is a fact worth keeping when we have it, but
  *    it is carried in fields that cannot hold a day — Agil sends `HHMM`, so
  *    26h50m reaches us as `0250` and a Lima-Madrid connection reads as under
@@ -32,7 +31,7 @@ const WALL_CLOCK = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/;
  * deliberately ignored: Click and Book writes `-0500` on Madrid, and believing
  * it is the whole bug.
  */
-function wallClockMs(value?: string): number | undefined {
+export function wallClockMs(value?: string): number | undefined {
   const match = WALL_CLOCK.exec(String(value ?? "").trim());
   if (!match) {
     return undefined;
@@ -48,6 +47,8 @@ function wallClockMs(value?: string): number | undefined {
 }
 
 const zoneFormatters = new Map<string, Intl.DateTimeFormat>();
+/* One entry per zone and hour of a year of departures stays well under this. */
+const ZONE_OFFSET_CACHE_MAX_ENTRIES = 20_000;
 const zoneOffsets = new Map<string, number>();
 
 function formatterFor(timeZone: string): Intl.DateTimeFormat | undefined {
@@ -105,6 +106,9 @@ function offsetMinutesAt(timeZone: string, instantMs: number): number | undefine
   }
 
   const offset = Math.round((local - instantMs) / MINUTE_MS);
+  if (zoneOffsets.size >= ZONE_OFFSET_CACHE_MAX_ENTRIES) {
+    zoneOffsets.clear();
+  }
   zoneOffsets.set(key, offset);
   return offset;
 }
@@ -177,7 +181,7 @@ export function wallClockMinutesBetween(
   return minutes > 0 ? minutes : undefined;
 }
 
-export interface SegmentTiming {
+interface SegmentTiming {
   origin?: string;
   destination?: string;
   departureAt?: string;

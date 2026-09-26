@@ -11,31 +11,25 @@ function PopoverTrigger({ ...props }: React.ComponentProps<typeof PopoverPrimiti
   return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
 }
 
-/*
- * 07 §0 · a popover enters on `emergente`: 140ms, opacity and 6px down.
- *
- * The movement belongs here and not on each caller. It used to be written on
- * the calendar's own card, which is a child of this surface — so the two date
- * pickers animated and Pasajeros, whose content is plain markup, appeared with
- * a hard cut. Same component, two behaviours, decided by whether someone had
- * remembered the class.
- */
+/* The entrance lives here, not at the call sites, so every popover arrives the
+   same way, 8px off the viewport edges. `bare` drops the surface for content
+   that draws its own card. */
 function PopoverContent({
   className,
   align = "center",
   sideOffset = 4,
+  collisionPadding = 8,
+  bare = false,
   ...props
-}: React.ComponentProps<typeof PopoverPrimitive.Content>) {
+}: React.ComponentProps<typeof PopoverPrimitive.Content> & { bare?: boolean }) {
   return (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Content
         data-slot="popover-content"
         align={align}
         sideOffset={sideOffset}
-        className={cn(
-          "fd-motion-emergente z-50 rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-lg outline-none",
-          className
-        )}
+        collisionPadding={collisionPadding}
+        className={cn("fd-popover fd-motion-emergente", bare && "fd-popover--bare", className)}
         {...props}
       />
     </PopoverPrimitive.Portal>

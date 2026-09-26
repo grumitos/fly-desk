@@ -8,22 +8,22 @@ import { MAX_FLEXIBLE_STAY_NIGHTS } from "./search-limits";
 
 export { MAX_FLEXIBLE_STAY_NIGHTS } from "./search-limits";
 
-export interface NightBounds {
+interface NightBounds {
   minNights: number;
   maxNights: number;
 }
 
-export interface UsefulRoundTripPair {
+interface UsefulRoundTripPair {
   departureDate: string;
   returnDate: string;
   stayNights: number;
 }
 
-export type FlexibleRoundTripResolutionMode =
+type FlexibleRoundTripResolutionMode =
   | FlexibleRoundTripMode
   | "legacy-night-range";
 
-export interface FlexibleRoundTripAxes {
+interface FlexibleRoundTripAxes {
   departureDates: string[];
   returnDates: string[];
 }
@@ -64,7 +64,7 @@ function resolveExactStayReturnBounds(leg: SearchLeg): Pick<ResolvedRoundTripFle
   };
 }
 
-export function normalizeNightValue(
+function normalizeNightValue(
   value: number | undefined,
   fallback?: number,
 ): number | undefined {
@@ -109,7 +109,7 @@ export function resolveNightBounds(leg: SearchLeg): NightBounds {
   };
 }
 
-export function resolveExactStayNights(leg: SearchLeg): number | undefined {
+function resolveExactStayNights(leg: SearchLeg): number | undefined {
   if (hasFiniteNumber(leg.stayNights)) {
     return normalizeNightValue(leg.stayNights);
   }

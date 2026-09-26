@@ -1,15 +1,8 @@
 import type { Cabin, PassengerMix } from "./types";
 
-export const MAX_COMMERCIAL_QUOTATION_CHARS = 16_384;
+const MAX_COMMERCIAL_QUOTATION_CHARS = 16_384;
 
-export type QuotationParseState =
-  | "parsed"
-  | "missing"
-  | "ambiguous"
-  | "ignored"
-  | "invalid";
-
-export type QuotationFieldSourceLabel =
+type QuotationFieldSourceLabel =
   | "format"
   | "route"
   | "outbound-schedule"
@@ -18,7 +11,7 @@ export type QuotationFieldSourceLabel =
   | "stops"
   | "price";
 
-export interface QuotationFieldSource {
+interface QuotationFieldSource {
   line: number;
   label: QuotationFieldSourceLabel;
 }
@@ -30,7 +23,7 @@ export type TracedQuotationField<T> =
   | { state: "ignored"; reason: string; source?: QuotationFieldSource }
   | { state: "invalid"; reason: string; source?: QuotationFieldSource };
 
-export interface PartialQuotationSearchLeg {
+interface PartialQuotationSearchLeg {
   origin?: string;
   destination?: string;
   departureDate?: string;
@@ -41,14 +34,14 @@ export interface PartialQuotationSearchLeg {
  * Data that can be recovered without turning a commercial message into an
  * executable search. Notably, this contract has no filters or price fields.
  */
-export interface PartialQuotationSearchRequest {
+interface PartialQuotationSearchRequest {
   tripType?: "one-way" | "round-trip";
   legs?: [PartialQuotationSearchLeg];
   passengers?: Partial<PassengerMix>;
   cabin?: Cabin;
 }
 
-export interface CommercialQuotationParseFields {
+interface CommercialQuotationParseFields {
   format: TracedQuotationField<"commercial-quotation-v1">;
   origin: TracedQuotationField<string>;
   destination: TracedQuotationField<string>;

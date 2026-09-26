@@ -6,12 +6,9 @@ import { resolvePersistPath } from "./runtime-paths";
 /*
  * The marks the providers draw, kept once and served from here.
  *
- * Eight ordinary routes return 38 distinct carriers and the release ships marks
- * for 23 of them: British Airways, Vueling, Turkish, Alitalia, TAP and Emirates
- * were all drawn as their bare two letters. That gap is not a list anybody can
- * keep by hand — every new route adds carriers — and it does not have to be,
- * because the provider that serves the results also serves the artwork, at a
- * path derived from the code.
+ * The carriers a search returns are not a list anybody can keep by hand — every
+ * new route adds some — and it does not have to be, because the provider that
+ * serves the results also serves the artwork, at a path derived from the code.
  *
  * So a code with no bundled mark is fetched once, checked, and written next to
  * the other mutable state. Everything after that is a local file. Nothing here
@@ -35,7 +32,6 @@ const MARK_NEGATIVE_TTL_MS = 24 * 60 * 60 * 1000;
 type FetchImpl = typeof fetch;
 
 interface AirlineMarkStoreOptions {
-  /** Overridden in tests; production resolves it from the app data directory. */
   directory?: string;
   fetchImpl?: FetchImpl;
   sourceBaseUrl?: string;
@@ -45,18 +41,13 @@ interface AirlineMarkStoreOptions {
 const missingUntil = new Map<string, number>();
 const inFlight = new Map<string, Promise<string | undefined>>();
 
-export function airlineMarkDirectory(override?: string): string | undefined {
+function airlineMarkDirectory(override?: string): string | undefined {
   if (override) {
     return override;
   }
 
   const path = resolvePersistPath("FLY_DESK_AIRLINE_MARK_DIR", "airline-marks");
   return path;
-}
-
-export function resetAirlineMarkStoreForTests(): void {
-  missingUntil.clear();
-  inFlight.clear();
 }
 
 /**
@@ -171,22 +162,15 @@ async function harvestAirlineMark(
  * afterwards. Shared with `scripts/extract-airline-icons.ts` so a mark entering
  * the repository and a mark entering the cache clear the same bar.
  *
- * It used to read the signature and the two IHDR numbers by hand, which
- * answered for the header and nothing else: bytes that announced 70x70 and then
- * stopped — a truncated response, a CDN error page with a PNG magic number, a
- * corrupt body — passed, were written, and left the card drawing a broken image
- * instead of the two letters it is supposed to fall back to. `Bun.Image`
- * reads the same header and stops in the same place (`metadata()` is documented
- * as decoding just enough for width, height and format), so the decode below is
- * the part that is new. It is what proves there are pixels behind the header.
+ * `metadata()` decodes just enough for width, height and format, so bytes that
+ * announce a square header and then stop — a truncated response, a CDN error
+ * page with a PNG magic number, a corrupt body — would pass it and leave the
+ * card drawing a broken image instead of the two letters. The full decode
+ * below is what proves there are pixels behind the header. It is paid once per
+ * carrier, on a worker thread; afterwards the mark is a local file.
  *
- * The decode costs about a millisecond and is paid once per carrier, ever —
- * afterwards the mark is a local file. It runs on a worker thread, so it is not
- * a millisecond of the request either.
- *
- * This lives here rather than in `core/`, where it sat next to the code the
- * browser bundle imports. `Bun.Image` has no meaning in a browser, and both
- * callers are server-side.
+ * Not in `core/`, which the browser bundle imports: `Bun.Image` has no meaning
+ * in a browser, and both callers are server-side.
  */
 export async function readSquarePngSize(bytes: Uint8Array): Promise<number | undefined> {
   try {

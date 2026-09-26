@@ -12,6 +12,8 @@ import {
   resolveLocalCostamarMatrixProgressive,
   resolveLocalCostamarRangeProgressive,
 } from "./local-costamar";
+import { closeOpenBrowserTargets } from "./browser-targets";
+import { withProviderJobSignal } from "./provider-fetch";
 import type { CanonicalOffer, MatrixResponse, ProviderId } from "./core/types";
 import {
   createProviderDiagnostics,
@@ -28,19 +30,79 @@ import type {
   ProviderSearchWorkerRequest,
 } from "./search-worker-protocol";
 
-/* Jobs the client gave up on. The provider callbacks answer `false` from here
-   on, which is what stops the remaining fan-out inside a pooled worker that
-   must stay alive for the other jobs it is multiplexing. */
-const cancelledJobIds = new Set<string>();
-const activeJobIds = new Set<string>();
+/* The jobs this worker is running, each with the signal that stops it. A job
+   the client gives up on is aborted: its provider requests in flight are cut
+   (`fetchProvider`), no new one is sent, and its provider callbacks answer
+   `false`, which ends the fan-out inside a pooled worker that stays alive for
+   the other jobs it is multiplexing. */
+const runningJobs = new Map<string, AbortController>();
+
+/*
+ * How long a stopping worker spends closing the tabs it has open in the shared
+ * Chrome, which outlives it. The runner gives its whole stop 8 s, and systemd
+ * kills what is left of the unit 15 s after the stop began.
+ */
+const STOP_TAB_CLOSE_TIMEOUT_MS = 2_000;
+/*
+ * How long the jobs of a signalled worker run on while its runner decides how
+ * they end. The runner lets them finish for 3 s, cancels the rest keeping what
+ * they found, and then stops its workers itself; this bound only matters when
+ * it never does.
+ */
+const STOP_GRACE_MS = 6_000;
+/* Set once the worker hangs up on its jobs; it sends nothing after that. */
+let stopping = false;
+let stopGrace: ReturnType<typeof setTimeout> | undefined;
 
 function jobIsLive(id: string): boolean {
-  return !cancelledJobIds.has(id);
+  return !stopping && runningJobs.get(id)?.signal.aborted === false;
 }
 
 function send(message: ProviderSearchWorkerMessage): void {
+  /* Nobody reads a stopping worker. */
+  if (stopping) {
+    return;
+  }
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
+
+/*
+ * Hangs up on every job left, closes the tabs the worker has open, within a
+ * bound, and exits. Left to its default a signal would end the worker before
+ * the `finally` that closes its tab.
+ */
+function stopNow(): void {
+  if (stopping) {
+    return;
+  }
+  stopping = true;
+  clearTimeout(stopGrace);
+  for (const controller of runningJobs.values()) {
+    controller.abort();
+  }
+  void closeOpenBrowserTargets(STOP_TAB_CLOSE_TIMEOUT_MS).finally(() => process.exit(0));
+}
+
+/*
+ * A worker is signalled with its runner: systemd signals every process of the
+ * unit at once, and a terminal every process of its group. The jobs it runs
+ * belong to the runner's stop, which lets them finish for a moment and cancels
+ * the rest keeping what they found; a worker that died on that same signal
+ * would turn each of them into a provider failure. So the first signal while
+ * jobs run leaves them running, their answers still sent, until the runner
+ * stops the worker (a second signal, or its input closing) or `STOP_GRACE_MS`
+ * passes. A worker with no job, or stopped by its runner, stops at once.
+ */
+function stopOnSignal(): void {
+  if (stopGrace || stdinEnded || runningJobs.size === 0) {
+    stopNow();
+    return;
+  }
+  stopGrace = setTimeout(stopNow, STOP_GRACE_MS);
+}
+
+process.on("SIGTERM", stopOnSignal);
+process.on("SIGINT", stopOnSignal);
 
 function serializeError(
   id: string,
@@ -70,14 +132,14 @@ function createMatrixDraft(input: ProviderSearchWorkerRequest): MatrixResponse {
     : createLocalAgilMatrixDraft(input.request, draftMeta);
 }
 
-async function runProviderSearch(input: ProviderSearchWorkerRequest): Promise<ProviderSearchWorkerComplete> {
+async function runProviderSearch(input: ProviderSearchWorkerRequest, signal: AbortSignal): Promise<ProviderSearchWorkerComplete> {
   const diagnostics = createProviderDiagnostics(input.providerId, input.kind === "matrix" ? "matrix" : input.kind);
   diagnostics.events = [];
   const emitEvent = (event: typeof diagnostics.events[number]) => {
     send({ id: input.id, type: "provider-event", event });
   };
 
-  return withProviderDiagnostics(diagnostics, emitEvent, async () => {
+  return withProviderDiagnostics(diagnostics, emitEvent, () => withProviderJobSignal(signal, async () => {
     recordProviderDiagnosticEvent("provider_started");
 
     if (input.kind === "matrix") {
@@ -126,7 +188,7 @@ async function runProviderSearch(input: ProviderSearchWorkerRequest): Promise<Pr
       warnings: result.warnings,
       partial: result.partial,
     };
-  });
+  }));
 }
 
 let pendingMessages = 0;
@@ -141,13 +203,13 @@ function maybeExit(): void {
 
 function handleWorkerRequest(message: ProviderSearchWorkerRequest): void {
   pendingMessages += 1;
-  activeJobIds.add(message.id);
-  void runProviderSearch(message)
+  const controller = new AbortController();
+  runningJobs.set(message.id, controller);
+  void runProviderSearch(message, controller.signal)
     .then((result) => send(result))
     .catch((error) => send(serializeError(message.id, message.providerId, error)))
     .finally(() => {
-      activeJobIds.delete(message.id);
-      cancelledJobIds.delete(message.id);
+      runningJobs.delete(message.id);
       pendingMessages -= 1;
       maybeExit();
     });
@@ -174,11 +236,8 @@ function handleInboundMessage(message: ProviderSearchWorkerInbound): void {
   }
 
   if (message.type === "cancel") {
-    /* A cancel that lands after the job settled has nothing to stop; recording
-       it would only pin the id in memory for the worker's lifetime. */
-    if (activeJobIds.has(message.id)) {
-      cancelledJobIds.add(message.id);
-    }
+    /* A cancel that lands after the job settled finds nothing to stop. */
+    runningJobs.get(message.id)?.abort();
     return;
   }
 
@@ -225,5 +284,10 @@ process.stdin.on("end", () => {
   }
 
   stdinEnded = true;
+  /* A runner that closes the input of a signalled worker is stopping it. */
+  if (stopGrace) {
+    stopNow();
+    return;
+  }
   maybeExit();
 });

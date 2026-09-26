@@ -18,7 +18,7 @@ interface ScheduleVariant {
 interface ScheduleGroupBucket {
   key: string;
   providerSource: CanonicalOffer["providerSource"];
-  variants: ScheduleVariant[];
+  offers: CanonicalOffer[];
 }
 
 function rawRefString(value: unknown): string | undefined {
@@ -180,13 +180,23 @@ function opaqueId(prefix: string, value: string): string {
 }
 
 function materializeGroup(bucket: ScheduleGroupBucket): OfferScheduleGroup | undefined {
+  /* One offer is no group, so its schedule is never fingerprinted: most offers
+     are alone in their bucket, and a fingerprint is a string of every segment. */
+  if (bucket.offers.length <= 1) {
+    return undefined;
+  }
+
+  const variants = bucket.offers.flatMap((offer) => {
+    const variant = scheduleVariant(offer);
+    return variant ? [variant] : [];
+  });
   const outboundOptions = new Map<string, OfferScheduleOption>();
   const inboundOptions = new Map<string, OfferScheduleOption>();
   const combinations: OfferScheduleCombination[] = [];
   const seenPairs = new Set<string>();
   const groupId = opaqueId("schedule-group", bucket.key);
 
-  for (const variant of bucket.variants) {
+  for (const variant of variants) {
     const outboundOptionId = opaqueId(
       "outbound",
       `${bucket.key}\u0000${variant.outboundIdentity}`,
@@ -230,7 +240,7 @@ function materializeGroup(bucket: ScheduleGroupBucket): OfferScheduleGroup | und
     outboundOptions: [...outboundOptions.values()],
     ...(inboundOptions.size > 0 ? { inboundOptions: [...inboundOptions.values()] } : {}),
     combinations,
-    truncated: bucket.variants.some(
+    truncated: variants.some(
       ({ offer }) => offer.rawRefs?.scheduleVariantsTruncated === true,
     ),
   };
@@ -253,19 +263,18 @@ export function buildOfferScheduleGroups(
     seenOfferIds.add(offer.id);
 
     const key = groupKeyForOffer(offer);
-    const variant = scheduleVariant(offer);
-    if (!key || !variant) {
+    if (!key) {
       continue;
     }
 
     const bucket = buckets.get(key);
     if (bucket) {
-      bucket.variants.push(variant);
+      bucket.offers.push(offer);
     } else {
       buckets.set(key, {
         key,
         providerSource: offer.providerSource,
-        variants: [variant],
+        offers: [offer],
       });
     }
   }

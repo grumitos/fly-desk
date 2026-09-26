@@ -11,7 +11,7 @@ import { resolveAirlineDisplayName } from "./airline-names";
 export const QUOTATION_FARE_STALE_MINUTES = 15;
 export const QUOTATION_FARE_FRESHNESS_MS = QUOTATION_FARE_STALE_MINUTES * 60_000;
 
-export interface QuotationRenderOptions {
+interface QuotationRenderOptions {
   timeZone?: string;
   usdToPenRate?: number;
   usdToPenRateInfo?: QuotationUsdToPenRateInfo;
@@ -351,7 +351,7 @@ function collectQuotationRouteEndpoints(offer: CanonicalOffer, request: SearchRe
   return endpoints.filter((endpoint) => endpoint.code || endpoint.label || endpoint.name);
 }
 
-export function isPeruDomesticQuotation(offer: CanonicalOffer, request: SearchRequest): boolean {
+function isPeruDomesticQuotation(offer: CanonicalOffer, request: SearchRequest): boolean {
   const endpoints = collectQuotationRouteEndpoints(offer, request);
   return endpoints.length > 0 && endpoints.every((endpoint) =>
     isPeruEndpoint(endpoint.code, endpoint.label, endpoint.name)

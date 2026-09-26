@@ -1,8 +1,8 @@
-export const BROWSER_CLIENT_SESSION_STORAGE_KEY = "fly-desk:client-session-id"
+const BROWSER_CLIENT_SESSION_STORAGE_KEY = "fly-desk:client-session-id"
 
 const CLIENT_SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{15,95}$/
 
-export function normalizeBrowserClientSessionId(value: unknown): string | undefined {
+function normalizeBrowserClientSessionId(value: unknown): string | undefined {
   return typeof value === "string" && CLIENT_SESSION_ID_PATTERN.test(value)
     ? value
     : undefined
@@ -26,15 +26,9 @@ function generateBrowserClientSessionId(): string | undefined {
 }
 
 /*
- * `localStorage`, not `sessionStorage`. This id is what «Recientes» is keyed by,
- * and `sessionStorage` dies with the tab: every new tab minted a new id, so the
- * panel opened empty for everyone, always, and no server-side retention could
- * change that - the history was being thrown away at the client. Recientes is
- * meant to be "what you have been looking at lately", which outlives a tab.
- *
- * Not to be confused with the deliberately per-tab marker in `search-share.ts`:
- * that one answers "did THIS tab write this URL", where dying with the tab is
- * the whole point.
+ * `localStorage`, not `sessionStorage`: «Recientes» is keyed by this id and has
+ * to outlive a tab. The per-tab marker in `search-share.ts` is the opposite
+ * question and dies with the tab on purpose.
  */
 export function getBrowserClientSessionId(): string | undefined {
   if (typeof window === "undefined") {

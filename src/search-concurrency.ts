@@ -40,8 +40,15 @@ export const SHARED_SEARCH_CONCURRENCY = Object.freeze({
     return atLeast(readIntegerEnv("SEARCH_MATRIX_CELL_CONCURRENCY"), 6);
   },
   rangeMinimum: 2,
+  /* Three days of a range at a time. Search admission runs one month-long
+     range at a time (`src/search-admission.ts`), so a migratory sweep gets its
+     speed from the days inside a month. Measured over a two-month sweep
+     against the fakes: 2 days took 48.9 s, 3 took 33.4 s and 4 took 28.6 s,
+     but 4 raised the search unit's peak by about 100 MiB, and 3 leaves room
+     under the Agil in-flight ceiling (21 of 32) for the other agent's exact
+     search. */
   get rangeSearchDefault() {
-    return atLeast(readIntegerEnv("SEARCH_RANGE_SEARCH_CONCURRENCY"), 2);
+    return atLeast(readIntegerEnv("SEARCH_RANGE_SEARCH_CONCURRENCY") ?? 3, 2);
   },
 });
 

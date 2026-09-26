@@ -1,3 +1,4 @@
+import { envNumber } from "./env";
 import { prewarmLocalAgilSession } from "./local-agil";
 import { prewarmLocalCostamarContext } from "./local-costamar";
 import { logPerfSpan, startPerfTimer } from "./perf";
@@ -15,10 +16,8 @@ import {
 const DEFAULT_PROVIDER_PREWARM_INTERVAL_MS = 10 * 60 * 1000;
 
 function readNonNegativeMs(name: string, fallbackMs: number): number {
-  const raw = Number(process.env[name] ?? fallbackMs);
-  return Number.isFinite(raw) && raw >= 0
-    ? Math.trunc(raw)
-    : fallbackMs;
+  const configured = envNumber(name, fallbackMs);
+  return configured >= 0 ? Math.trunc(configured) : fallbackMs;
 }
 
 export function providerPrewarmEnabled(): boolean {
@@ -32,7 +31,7 @@ export function providerPrewarmIntervalMs(): number {
 /* A provider error can carry a URL with a token in it, so anything long enough
    to be credential material is masked before it reaches the journal, and the
    message is truncated: this is a breadcrumb for an operator, not a payload. */
-export function describePrewarmFailure(reason: unknown): string {
+function describePrewarmFailure(reason: unknown): string {
   const message = reason instanceof Error ? reason.message : String(reason);
   const scrubbed = message
     /* A JWT first, as one unit. Its segments are individually short enough to
@@ -47,7 +46,7 @@ export function describePrewarmFailure(reason: unknown): string {
   return scrubbed.slice(0, 200) || "(no message)";
 }
 
-export async function prewarmProvidersSilently(providerStatus?: ProviderStatusTracker): Promise<void> {
+async function prewarmProvidersSilently(providerStatus?: ProviderStatusTracker): Promise<void> {
   const prewarmStart = startPerfTimer();
   const providerIds = ["agil-local", "costamar"] as const satisfies readonly ProviderId[];
   providerIds.forEach((providerId) => providerStatus?.markChecking(providerId, "prewarm"));
@@ -78,11 +77,9 @@ export async function prewarmProvidersSilently(providerStatus?: ProviderStatusTr
     }
   });
 
-  /* These are failures, not skips. The old line said "skipped N provider(s)"
-     and listed only the ids, which reads as a benign optimisation - and the
-     reason had been computed one block above and then thrown away. Agil was
-     unreachable for two days and this line was the entire trace of it: no
-     reason, no error, and a word that invited the reader to move on. */
+  /* These are failures, not skips, so each one is logged with its reason and
+     detail: this line can be the only trace of a provider that has been
+     unreachable for days. */
   const failures = outcomes.flatMap((outcome, index) =>
     outcome.status === "rejected"
       ? [{ providerId: providerIds[index]!, reason: outcome.reason }]

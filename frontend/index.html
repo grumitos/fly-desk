@@ -3,27 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="color-scheme" content="light" />
     <title>Fly Desk</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <!--
-      The axes the two families really have, which are not the ones plate 5a
-      asks for.
-
-      Inter goes to 900 and 900 is what is requested here, so titles at 700/800
-      are drawn with the real face. IBM Plex Mono does not: it is a static
-      family that stops at Bold, and asked for `wght@400;500;600;700;800` it
-      answers with four faces — 400, 500, 600 and 700 — and no 800. So the 800
-      the plate gives every figure does not exist in this font and was never
-      loaded, however firmly this comment used to claim these were "the exact
-      axes the mockup requests".
-
-      A weight that is not there is not requested: `--fd-weight-figure` came
-      down to 700, which is the face the price was already being drawn with. If
-      a real 800 ever ships, it is added here and the token goes back up.
-    -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <!-- __FLYDESK_FONTS__ -->
     <!-- __FLYDESK_RUNTIME_CONFIG__ -->
     <script>
       (() => {
@@ -34,6 +17,8 @@
           if (saved === "light" || saved === "dark") theme = saved;
         } catch {}
         root.dataset.theme = theme;
+        root.classList.toggle("dark", theme === "dark");
+        document.querySelector('meta[name="color-scheme"]')?.setAttribute("content", theme);
       })();
     </script>
   </head>

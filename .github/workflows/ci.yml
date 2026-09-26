@@ -4,9 +4,6 @@ on:
   pull_request:
     branches:
       - main
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -37,25 +34,22 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
-      - name: Lint if configured
-        run: |
-          set -euo pipefail
-          if bun -e "const pkg = await Bun.file('package.json').json(); process.exit(pkg.scripts?.lint ? 0 : 1)"; then
-            bun run lint
-          else
-            echo "No lint script configured; skipping."
-          fi
+      - name: Lint
+        run: bun run lint
 
       - name: Build
         run: bun run build
 
-      - name: Core tests
-        run: bun run test:core
+      - name: Smoke the release artifact
+        run: |
+          set -euo pipefail
+          bash scripts/pack-release.sh "$(git rev-parse HEAD)" "$RUNNER_TEMP/fly-desk.tar.gz"
+          bun scripts/release-smoke.ts "$RUNNER_TEMP/fly-desk.tar.gz"
 
-  ui:
+  e2e:
     name: Browser UI gate
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -66,23 +60,21 @@ jobs:
         with:
           bun-version: 1.4.0
 
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 26
-
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: UI tests
-        run: bun run test:ui
+      - name: Build
+        run: bun run build
+
+      - name: End-to-end tests
+        run: bun scripts/run-e2e.ts
         env:
           FLY_DESK_TEST_BROWSER_CHANNEL: chrome
 
-      - name: Upload UI failure artifacts
+      - name: Upload end-to-end failure artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: fly-desk-ui-failures
-          path: test-results/ui/
+          name: fly-desk-e2e-failures
+          path: test-results/e2e/
           if-no-files-found: ignore

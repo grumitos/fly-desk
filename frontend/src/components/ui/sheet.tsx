@@ -10,64 +10,30 @@ import {
 import { createPortal } from "react-dom"
 import { AppIcon } from "@/components/ui/app-icon"
 import { useOverlayHistory } from "@/hooks/useOverlayHistory"
+import { firstFocusable, focusableWithin } from "@/lib/focusable"
 import { isTopOverlay, popOverlay, pushOverlay } from "@/lib/overlay-stack"
 import { motionToken } from "@/lib/reduced-motion"
 import { cn } from "@/lib/utils"
 
-/*
- * 02 §7: «sale en la mitad del tiempo»; 07 §3 puts the number at 160 ms, and
- * §4 row 7 says the exit is opacity plus displacement only. The node has to
- * outlive `open` by exactly that long, which is why the sheet keeps a phase of
- * its own instead of rendering straight off the prop.
- *
- * The number is no longer written here, it is read from `--fd-dur-exit-hoja`
- * where the catalog keeps it. A copy in JS of a row of the table is a row that
- * can fall behind — and the `prefers-reduced-motion` block already zeroes that
- * row, so reading it settles both things in one lookup and without a
- * `matchMedia` of its own.
- */
+/* The sheet outlives `open` by its exit, read from the motion tokens so reduced
+   motion (which zeroes them) drops it at once. */
 function sheetExitDuration(): number {
   return motionToken("--fd-dur-exit-hoja")
 }
 
-/*
- * 11 §6 and the gesture plate — the native vocabulary, not a new handler.
- *
- * Two axes, and which of the two keeps the finger is decided in the first few
- * pixels of the movement rather than before it:
- *
- *   · vertical, and only from the grabber. The body is the one thing that
- *     scrolls (02 §7), so a drag that starts there belongs to the scroller and
- *     to nothing else;
- *   · horizontal, on the sheets that ask for it. The sheet leaves by the edge
- *     it came in through, which is iOS's interactive back: on the desk the
- *     detail arrives and leaves from the right, and on a phone its only way out
- *     is a chevron already pointing left. Every part of the vocabulary said
- *     «atrás» except the gesture.
- *
- * `touch-action: pan-y` on the sheet is the half of this that is not in this
- * file: it leaves the vertical axis to the native scroller and takes the
- * horizontal one from the browser, which is exactly the split above. Without it
- * the split would need `preventDefault`, and React registers `touchmove` as
- * passive.
- */
+/* A vertical drag from the grabber closes a bottom sheet; a horizontal one
+   closes a `backSwipe` sheet toward its edge. The axis locks in the first
+   pixels and the rest stays native scroll (`touch-action: pan-y`). */
 
 /** Pixels of movement before the gesture is given to one axis or the other. */
 const AXIS_LOCK_PX = 8
 /** The share of the sheet's own measure a drag has to cover to dismiss it. */
 const DISMISS_FRACTION = 1 / 3
-/** px/ms. A short but fast throw dismisses it too… */
+/** px/ms: a short, fast throw dismisses too… */
 const DISMISS_VELOCITY = 0.5
-/** …as long as it travelled this far, so an unsteady tap does not count. */
+/** …if it travelled this far, so an unsteady tap does not count. */
 const DISMISS_VELOCITY_MIN_PX = 24
-/**
- * The smallest window a velocity is measured over: one frame.
- *
- * A real finger produces a `touchmove` every 8–16 ms. Below that there is no
- * velocity to measure, only noise — or synthetic events — and dividing a
- * displacement by a fraction of a millisecond gives a figure large enough to
- * turn every short drag into a throw.
- */
+/** One frame: below it a velocity is noise. */
 const VELOCITY_SAMPLE_MS = 16
 
 type SheetPhase = "closed" | "open" | "closing"
@@ -87,15 +53,6 @@ type Gesture = {
   velocity: number
 }
 
-const FOCUSABLE_SELECTOR = [
-  "a[href]",
-  "button:not([disabled])",
-  "input:not([disabled])",
-  "select:not([disabled])",
-  "textarea:not([disabled])",
-  "[tabindex]:not([tabindex='-1'])",
-].join(",")
-
 type SheetProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -107,31 +64,14 @@ type SheetProps = {
   placement?: "bottom" | "side" | "modal"
   className?: string
   /**
-   * Where the sheet mounts. Defaults to the shell, so the `fdshell` container
-   * query still reaches everything inside it — a sheet portalled to `<body>`
-   * sits outside the container and silently loses every mobile rule.
-   *
-   * Armazón B passes the results region instead: plate 8a puts the 380px side
-   * sheet and its scrim over the results, not over the whole window, because
-   * the form above stays usable.
+   * Where the sheet mounts. Defaults to the shell, whose phone rules have to
+   * reach it; the side sheet passes the results region, so the form above it
+   * stays usable.
    */
   container?: HTMLElement | null
-  /**
-   * Whether the sheet draws its own handle and title bar. Plate 8a's side sheet
-   * does not: the detail arrives with its own header — carrier, provider, price
-   * and close — and a generic "Oferta" bar above it would be a second header
-   * saying less than the first. The dialog keeps its accessible name either way.
-   */
+  /** Whether the sheet draws its own title bar (the detail brings its own). */
   chrome?: boolean
-  /**
-   * Whether this sheet is dismissed by swiping towards the edge it came in
-   * through.
-   *
-   * It goes where the rest of the vocabulary already says «atrás»: the detail.
-   * The other bottom sheets arrive from below, close with a cross, and their
-   * gesture is the grabber; giving them a sideways exit as well would invent a
-   * direction nothing about them announces.
-   */
+  /** Whether a sideways swipe towards the edge it came from dismisses it. */
   backSwipe?: boolean
 }
 
@@ -154,21 +94,17 @@ export function Sheet({
   const openerRef = useRef<HTMLElement | null>(null)
   const gestureRef = useRef<Gesture | null>(null)
   const onOpenChangeRef = useRef(onOpenChange)
-  /* absent → never dragged, so the entry animation still owns `transform`;
-     `active` → the finger owns it; `settle` → the finger let go short of the
-     threshold and the sheet springs back. Once a drag has happened the entry
-     animation stays off for the life of the sheet: turning it back on at
-     release would replay it from the edge of the screen. */
+  /* `active`: the finger owns `transform`; `settle`: released short of the
+     threshold, springing back. Once dragged, the entrance stays off so it
+     cannot replay. */
   const [drag, setDrag] = useState<DragState>(null)
-  /* Which edge it leaves by. Only the swipe dismissal writes it; the ordinary
-     exit of each placement is already said by its class. */
+  /* Set only by a swipe dismissal; placements otherwise leave by their own
+     edge. */
   const [dismissAxis, setDismissAxis] = useState<"swipe" | null>(null)
   const [closing, setClosing] = useState(false)
   const [previousOpen, setPreviousOpen] = useState(open)
 
-  /* Adjusting state while rendering, which is the sanctioned way to react to a
-     prop change: `open` going false starts the exit, and the timer below is the
-     only thing that ends it. */
+  /* `open` going false starts the exit; the timer below ends it. */
   if (previousOpen !== open) {
     setPreviousOpen(open)
     setClosing(!open)
@@ -198,9 +134,8 @@ export function Sheet({
     onOpenChangeRef.current(false)
   }, [])
 
-  /* The system back closes the sheet, and the cross and the scrim close it the
-     same way: `requestClose` consumes the history entry instead of closing by
-     hand, so the gesture and the tap do literally the same thing. */
+  /* The system back, the cross and the scrim all close through the history
+     entry, so they behave the same. */
   const { requestClose } = useOverlayHistory(open, close, "fd-sheet")
 
   useEffect(() => {
@@ -216,7 +151,7 @@ export function Sheet({
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        // Only the most recent layer answers Esc (01 §8).
+        // Only the top layer answers Esc.
         if (!isTopOverlay(layer)) return
         event.preventDefault()
         requestClose()
@@ -226,8 +161,7 @@ export function Sheet({
 
       const panel = panelRef.current
       if (!panel) return
-      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
-        .filter((element) => !element.hasAttribute("disabled") && element.offsetParent !== null)
+      const focusable = focusableWithin(panel)
       if (focusable.length === 0) {
         event.preventDefault()
         panel.focus()
@@ -248,8 +182,7 @@ export function Sheet({
 
     requestAnimationFrame(() => {
       const panel = panelRef.current
-      const first = panel?.querySelector<HTMLElement>("[data-sheet-autofocus]")
-        ?? panel?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
+      const first = panel?.querySelector<HTMLElement>("[data-sheet-autofocus]") ?? firstFocusable(panel)
       ;(first ?? panel)?.focus()
     })
 
@@ -261,12 +194,8 @@ export function Sheet({
     }
   }, [open, requestClose, title])
 
-  /*
-   * The grabber marks the start as its own. What follows — following the
-   * finger, deciding the axis, and what a release means — is one recogniser for
-   * the whole sheet: two nested ones would have to agree on which of them won,
-   * and the browser settled that question with propagation already.
-   */
+  /* One recogniser for the whole sheet; the grabber only marks where the
+     touch started. */
   const handleTouchStart = (event: TouchEvent<HTMLElement>) => {
     const touch = event.touches[0]
     const panel = panelRef.current
@@ -287,9 +216,7 @@ export function Sheet({
       velocity: 0,
     }
 
-    /* Only a start on the grabber is known to be a drag already; from the body
-       it has to wait and see where it goes, and until then the sheet is not
-       marked at all. That is what leaves the content's scroll untouched. */
+    /* From the body a touch waits to see its axis, so scrolling is untouched. */
     if (fromGrabber) setDrag("active")
   }
 
@@ -305,15 +232,12 @@ export function Sheet({
     if (gesture.axis === null) {
       if (Math.abs(deltaX) < AXIS_LOCK_PX && Math.abs(deltaY) < AXIS_LOCK_PX) return
       const horizontal = Math.abs(deltaX) > Math.abs(deltaY)
-      /* Horizontal only where it was asked for; vertical only from the
-         grabber. Everything else belongs to the scroller and is handed back
-         without having been touched. */
+      /* Horizontal only where asked for, vertical only from the grabber;
+         anything else is the scroller's. */
       if (horizontal && backSwipe) {
         gesture.axis = "x"
-        /* The attribute is written by hand as well because it is what turns
-           the entry animation off, and that has to be off in the same frame the
-           first transform is written: `both` leaves the animation outranking
-           the inline style until React commits. */
+        /* Written directly too: the entrance must be off in the frame the
+           first transform lands, before React commits. */
         panel.dataset.drag = "active"
         setDrag("active")
       } else if (!horizontal && gesture.fromGrabber) {
@@ -326,9 +250,7 @@ export function Sheet({
     }
 
     if (gesture.axis === "x") {
-      /* The clock is `performance.now()` and not the event's: the `timeStamp`
-         React hands over is React's own, not always the native event's, and a
-         velocity computed across two different clocks is not a velocity. */
+      /* `performance.now()`, not React's event timestamp: one clock. */
       const now = performance.now()
       if (now - gesture.lastAt >= VELOCITY_SAMPLE_MS) {
         gesture.velocity = (touch.clientX - gesture.lastX) / (now - gesture.lastAt)
@@ -336,15 +258,13 @@ export function Sheet({
         gesture.lastAt = now
       }
 
-      /* Towards the edge it came in through and not the other way: dragging it
-         backwards would open a gap along a side that is flush with the screen. */
+      /* Only towards the edge it came from. */
       gesture.offset = Math.max(0, deltaX)
       panel.style.transform = `translateX(${gesture.offset}px)`
       return
     }
 
-    // Downwards only: dragging up would open a gap above a sheet that is
-    // already anchored to the bottom edge.
+    // Downwards only.
     gesture.offset = Math.max(0, deltaY)
     panel.style.transform = `translateY(${gesture.offset}px)`
   }
@@ -363,10 +283,7 @@ export function Sheet({
     const horizontal = gesture.axis === "x"
     const travelled = gesture.offset
     const reach = (horizontal ? box.width : box.height) * DISMISS_FRACTION
-    /* Distance **or** velocity: a short fast throw is as unambiguous as a long
-       slow drag, and asking both of them for the distance leaves the fast
-       gesture — the one a thumb in a hurry makes — with no answer. Velocity is
-       only consulted on the axis that measures it. */
+    /* Distance or, sideways, velocity: a quick throw dismisses too. */
     const thrown = horizontal
       && gesture.velocity >= DISMISS_VELOCITY
       && travelled >= DISMISS_VELOCITY_MIN_PX
@@ -379,8 +296,7 @@ export function Sheet({
     }
 
     if (horizontal) {
-      /* The exit starts where the finger left it instead of returning to zero
-         to leave again: the first frame of `fd-exit-swipe` reads this property. */
+      /* The exit starts where the finger left it (`fd-exit-swipe`). */
       panel.style.setProperty("--fd-sheet-drag-x", `${travelled}px`)
       setDismissAxis("swipe")
     }
@@ -394,9 +310,7 @@ export function Sheet({
     ?? document.querySelector<HTMLElement>("[data-fd-sheet-root]")
     ?? document.body
 
-  /* The grabber is the gesture, not the chrome. The detail sheet mounts without
-     a title bar of its own — it arrives with one — and that left the sheet that
-     opens most often as the only one a thumb could not dismiss. */
+  /* Every bottom sheet has a grabber, chrome or not. */
   const grabber = placement === "bottom"
 
   return createPortal(

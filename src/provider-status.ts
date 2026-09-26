@@ -1,42 +1,39 @@
 import type { ProviderId } from "./core/types";
 import { PROVIDER_LABELS } from "./core/offer-grouping";
 
-export interface ProviderStatusDefinition {
+interface ProviderStatusDefinition {
   readonly id: ProviderId;
   readonly label: string;
 }
 
 /*
- * The order is the plinth's reading order and stays written out; the names come
- * from `PROVIDER_LABELS`, which is the one place on the backend an id becomes a
- * name. This file used to carry its own copy, and every public failure message
- * is built from the label it found here — so a rebrand that reached one map and
- * not the other would have shown the agent two names for one provider, one of
- * them in the notice that explains why a search came back short.
+ * The names come from `PROVIDER_LABELS`, the one place on the backend an id
+ * becomes a name: every public failure message is built from the label found
+ * here, and a second copy would let one provider carry two names.
  */
-export const PROVIDER_STATUS_DEFINITIONS: readonly ProviderStatusDefinition[] =
+const PROVIDER_STATUS_DEFINITIONS: readonly ProviderStatusDefinition[] =
   Object.freeze([
     Object.freeze({ id: "agil-local", label: PROVIDER_LABELS["agil-local"] }),
     Object.freeze({ id: "costamar", label: PROVIDER_LABELS.costamar }),
   ]);
 
-export const PROVIDER_STATUS_STATES = Object.freeze([
+const PROVIDER_STATUS_STATES = Object.freeze([
   "unknown",
   "checking",
   "ready",
   "degraded",
 ] as const);
 
-export type ProviderStatusState = (typeof PROVIDER_STATUS_STATES)[number];
+type ProviderStatusState = (typeof PROVIDER_STATUS_STATES)[number];
 
-export const PROVIDER_STATUS_EVIDENCE = Object.freeze([
+const PROVIDER_STATUS_EVIDENCE = Object.freeze([
   "prewarm",
   "search",
 ] as const);
 
-export type ProviderStatusEvidence = (typeof PROVIDER_STATUS_EVIDENCE)[number];
+type ProviderStatusEvidence = (typeof PROVIDER_STATUS_EVIDENCE)[number];
 
-export const PROVIDER_DEGRADED_REASON_CODES = Object.freeze([
+const PROVIDER_DEGRADED_REASON_CODES = Object.freeze([
   "authentication_required",
   "provider_unavailable",
   "timeout",
@@ -45,10 +42,10 @@ export const PROVIDER_DEGRADED_REASON_CODES = Object.freeze([
   "provider_error",
 ] as const);
 
-export type ProviderDegradedReasonCode =
+type ProviderDegradedReasonCode =
   (typeof PROVIDER_DEGRADED_REASON_CODES)[number];
 
-export const PROVIDER_STATUS_REASON_CODES = Object.freeze([
+const PROVIDER_STATUS_REASON_CODES = Object.freeze([
   "not_configured",
   "not_checked",
   "check_in_progress",
@@ -57,10 +54,10 @@ export const PROVIDER_STATUS_REASON_CODES = Object.freeze([
   ...PROVIDER_DEGRADED_REASON_CODES,
 ] as const);
 
-export type ProviderStatusReasonCode =
+type ProviderStatusReasonCode =
   (typeof PROVIDER_STATUS_REASON_CODES)[number];
 
-export interface ProviderStatusSnapshot {
+interface ProviderStatusSnapshot {
   readonly id: ProviderId;
   readonly label: string;
   readonly configured: boolean;
@@ -71,9 +68,9 @@ export interface ProviderStatusSnapshot {
   readonly stale: boolean;
 }
 
-export type ProviderStatusClock = () => number;
+type ProviderStatusClock = () => number;
 
-export interface ProviderStatusTrackerOptions {
+interface ProviderStatusTrackerOptions {
   readonly clock?: ProviderStatusClock;
   readonly ttlMs?: number;
   readonly configuredProviderIds?: readonly ProviderId[];
@@ -87,20 +84,14 @@ interface ProviderStatusRecord {
   readonly observedAtMs: number | null;
 }
 
-export const DEFAULT_PROVIDER_STATUS_TTL_MS = 5 * 60_000;
+const DEFAULT_PROVIDER_STATUS_TTL_MS = 5 * 60_000;
 
 /**
  * How long a `ready` observation stays trusted, given whatever refreshes it.
  *
- * It has to outlive its own refresh. Pinned at five minutes against a
- * ten-minute prewarm cycle, every observation went stale five minutes before
- * the next one arrived, so the idle rail — whose whole contract is 03 §5's
- * «aparecer = disponible» — sat empty for half of every cycle while both
- * providers were up. Disappearing then meant nothing at all.
- *
- * Two cycles plus a minute of margin, so one missed prewarm does not blank it
- * either. With prewarm off the only evidence is a real search, and the shorter
- * default is the honest one.
+ * It has to outlive its own refresh: two prewarm cycles plus a minute of
+ * margin, so one missed prewarm does not turn it stale either. With prewarm off
+ * the only evidence is a real search, and the shorter default is the honest one.
  */
 export function providerStatusTtlMsFor(prewarmIntervalMs: number): number {
   if (!Number.isFinite(prewarmIntervalMs) || prewarmIntervalMs <= 0) {

@@ -3,6 +3,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, wri
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { CanonicalOffer, QuotationUsdToPenRateInfo } from "./core/types";
+import { deskIsoDate } from "./core/runtime-config";
 
 interface ResolveQuotationUsdToPenRateOptions {
   now?: Date;
@@ -18,7 +19,7 @@ interface FetchExternalUsdToPenRateOptions {
 const AGIL_RATE_SOURCE_LABEL = "Agil";
 const EXTERNAL_RATE_SOURCE_LABEL = "SUNAT";
 const PERSISTED_RATE_SOURCE_LABEL = "Cache local";
-export const QUOTATION_RATE_TIMEOUT_DEFAULT_MS = 1_500;
+const QUOTATION_RATE_TIMEOUT_DEFAULT_MS = 1_500;
 const QUOTATION_RATE_TIMEOUT_MAX_MS = 10_000;
 
 type CachedUsdToPenRateInfo = QuotationUsdToPenRateInfo & {
@@ -45,15 +46,6 @@ function resolveQuotationUsdToPenRateCachePath(): string {
     || process.env.APPDATA?.trim()
     || join(homedir(), ".local", "state");
   return join(appDataRoot, "fly-desk", "quotation-usd-pen-rate.json");
-}
-
-function resolveLimaDay(now = new Date()): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Lima",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
 }
 
 function normalizePositiveRate(value: unknown): number | undefined {
@@ -120,7 +112,7 @@ function pickExternalRateInfo(payload: unknown, fallbackDate: string): Quotation
   );
 }
 
-export async function fetchExternalUsdToPenRateInfo(
+async function fetchExternalUsdToPenRateInfo(
   options: FetchExternalUsdToPenRateOptions = {},
 ): Promise<QuotationUsdToPenRateInfo | undefined> {
   try {
@@ -134,14 +126,10 @@ export async function fetchExternalUsdToPenRateInfo(
       return undefined;
     }
 
-    return pickExternalRateInfo(await response.json(), options.fallbackDate ?? resolveLimaDay());
+    return pickExternalRateInfo(await response.json(), options.fallbackDate ?? deskIsoDate());
   } catch {
     return undefined;
   }
-}
-
-export async function fetchExternalUsdToPenRate(): Promise<number | undefined> {
-  return (await fetchExternalUsdToPenRateInfo())?.rate;
 }
 
 function loadPersistedUsdToPenRate(): void {
@@ -219,7 +207,7 @@ function persistUsdToPenRateCache(): void {
 
 function rememberUsdToPenRate(info: QuotationUsdToPenRateInfo, now: Date): QuotationUsdToPenRateInfo {
   cachedUsdToPenRate = {
-    day: resolveLimaDay(now),
+    day: deskIsoDate(now),
     ...info,
   };
   persistUsdToPenRateCache();
@@ -239,7 +227,7 @@ export async function resolveStandaloneUsdToPenRateInfo(
   loadPersistedUsdToPenRate();
 
   const now = options.now ?? new Date();
-  const currentDay = resolveLimaDay(now);
+  const currentDay = deskIsoDate(now);
 
   const offerRateInfo = buildQuotationUsdToPenRateInfo(offer.usdToPenRate, AGIL_RATE_SOURCE_LABEL, currentDay);
   if (offerRateInfo) {
@@ -258,26 +246,4 @@ export async function resolveStandaloneUsdToPenRateInfo(
     ? buildQuotationUsdToPenRateInfo(await options.fetchExternalRate(), EXTERNAL_RATE_SOURCE_LABEL, currentDay)
     : await fetchExternalUsdToPenRateInfo({ fallbackDate: currentDay });
   return externalRateInfo ? rememberUsdToPenRate(externalRateInfo, now) : undefined;
-}
-
-export async function resolveStandaloneUsdToPenRate(
-  offer: CanonicalOffer,
-  options: ResolveQuotationUsdToPenRateOptions = {},
-): Promise<number | undefined> {
-  return (await resolveStandaloneUsdToPenRateInfo(offer, options))?.rate;
-}
-
-export function resetQuotationUsdToPenRateCacheForTests(
-  options: { preservePersisted?: boolean } = {},
-): void {
-  cachedUsdToPenRate = undefined;
-  persistedUsdToPenRateLoaded = false;
-
-  if (!options.preservePersisted) {
-    try {
-      rmSync(resolveQuotationUsdToPenRateCachePath(), { force: true });
-    } catch {
-      // Ignore cleanup failures in tests.
-    }
-  }
 }

@@ -1,7 +1,8 @@
 import { chmodSync, lstatSync, readFileSync, mkdirSync, mkdtempSync, existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { envNumber } from "./env";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import type { Browser, BrowserContext, Page } from "playwright";
+import { trackOpenBrowserTarget } from "./browser-targets";
 import {
   registerActiveTempArtifact,
   removePathWithRetries,
@@ -66,16 +67,23 @@ import {
   Money,
   ProviderMeta,
   PurchasePath,
-  SearchResponse,
   SearchRequest,
   Segment,
   LocationSuggestionType,
 } from "./core/types";
-import { rankLocationSuggestions } from "./location-suggestions";
+import { rankLocationSuggestions } from "./core/location-ranking";
 import { recordProviderFirstHttpRequest } from "./provider-diagnostics";
-import { providerPublicFailureMessage } from "./provider-status";
+import {
+  currentProviderJobSignal,
+  describeErrorChain,
+  fetchProvider,
+  isProviderRequestCancelled,
+  outsideProviderJob,
+  ProviderRequestCancelledError,
+} from "./provider-fetch";
+import { providerDegradedReasonFromError, providerPublicFailureMessage } from "./provider-status";
 
-export interface BrowserStorageSnapshot {
+interface BrowserStorageSnapshot {
   tokenSearchFlight: string;
   userData: string;
   ip: string;
@@ -108,7 +116,8 @@ interface CdpResponse {
 
 interface CdpClient {
   close: () => void;
-  send: (method: string, params?: Record<string, unknown>, sessionId?: string) => Promise<unknown>;
+  /** Rejects after `timeoutMs`, the client's own budget when omitted. */
+  send: (method: string, params?: Record<string, unknown>, sessionId?: string, timeoutMs?: number) => Promise<unknown>;
   waitForEvent: (method: string, sessionId: string | undefined, timeoutMs: number) => Promise<unknown>;
 }
 
@@ -225,7 +234,7 @@ interface AgilCellQuote {
   offer: CanonicalOffer;
 }
 
-export interface AgilGeoTreeLocation {
+interface AgilGeoTreeLocation {
   city?: string;
   country?: string;
   country_id?: string;
@@ -238,7 +247,7 @@ export interface AgilGeoTreeLocation {
   city_code?: string;
 }
 
-export interface AgilLocationSuggestion {
+interface AgilLocationSuggestion {
   code: string;
   city: string;
   country: string;
@@ -271,23 +280,13 @@ const AGIL_STORAGE_ORIGINS = [
   "https://motorvuelos.expertiatravel.com/",
 ] as const;
 const AGIL_TOKEN_STORAGE_KEYS = ["tokenSearchFlight", "tokenTravelC"] as const;
-const AGIL_HTTP_TIMEOUT_MS = Math.max(
-  5000,
-  Number(process.env.AGIL_HTTP_TIMEOUT_MS ?? 20000),
-);
+/* How long a storage origin may take to load in the shared Chrome. */
+const AGIL_STORAGE_PAGE_LOAD_TIMEOUT_MS = 30_000;
+const AGIL_HTTP_TIMEOUT_MS = envNumber("AGIL_HTTP_TIMEOUT_MS", 20000, { min: 5000 });
 const AGIL_SESSION_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
-const AGIL_SESSION_REVALIDATE_MS = Math.max(
-  15000,
-  Number(process.env.AGIL_SESSION_REVALIDATE_MS ?? 60000),
-);
-const AGIL_RANGE_DAY_RETRY_ATTEMPTS = Math.max(
-  0,
-  Math.trunc(Number(process.env.AGIL_RANGE_DAY_RETRY_ATTEMPTS ?? 1)) || 0,
-);
-const AGIL_RANGE_DAY_RETRY_DELAY_MS = Math.max(
-  0,
-  Math.trunc(Number(process.env.AGIL_RANGE_DAY_RETRY_DELAY_MS ?? 250)) || 0,
-);
+const AGIL_SESSION_REVALIDATE_MS = envNumber("AGIL_SESSION_REVALIDATE_MS", 60000, { min: 15000 });
+const AGIL_RANGE_DAY_RETRY_ATTEMPTS = Math.trunc(envNumber("AGIL_RANGE_DAY_RETRY_ATTEMPTS", 1, { min: 0 }));
+const AGIL_RANGE_DAY_RETRY_DELAY_MS = Math.trunc(envNumber("AGIL_RANGE_DAY_RETRY_DELAY_MS", 250, { min: 0 }));
 
 // An exact search fans out over every GDS id at once, so the ceiling can never
 // drop below that or a single search would need more than one wave to finish.
@@ -328,11 +327,12 @@ export const AGIL_CONCURRENCY = Object.freeze({
 /*
  * One matrix already puts up to `rangeSearch` x `matrixCell` x `gdsSearch`
  * /mv/search requests in flight, and every Agil search in this process shares a
- * single pooled worker, so concurrent searches from several callers used to add
- * up with no ceiling. This FIFO semaphore is that ceiling: a slot is held from
- * before the request starts until its body has been consumed, and only
- * /mv/search goes through it (start-search, the token mint and the location
- * suggestions stay unthrottled).
+ * single pooled worker, so concurrent searches from several callers add up.
+ * This FIFO semaphore is their ceiling: a slot is held from before the request
+ * starts until its body has been consumed, and only /mv/search goes through it
+ * (start-search, the token mint and the location suggestions stay unthrottled).
+ * A request whose search stops while it waits for a slot leaves the queue at
+ * once, so a stopped matrix does not hold back the searches queued behind it.
  */
 interface AgilInflightLimiter {
   acquire: () => Promise<() => void>;
@@ -372,13 +372,26 @@ function createAgilInflightLimiter(resolveLimit: () => number): AgilInflightLimi
 
   return {
     acquire: () => {
+      const signal = currentProviderJobSignal();
+      if (signal?.aborted) {
+        return Promise.reject(new ProviderRequestCancelledError("Agil search slot"));
+      }
       if (waiters.length === 0 && inFlight < resolveLimit()) {
         inFlight += 1;
         return Promise.resolve(makeRelease());
       }
 
-      return new Promise<() => void>((resolve) => {
-        waiters.push(() => resolve(makeRelease()));
+      return new Promise<() => void>((resolve, reject) => {
+        const leave = () => {
+          waiters = waiters.filter((entry) => entry !== waiter);
+          reject(new ProviderRequestCancelledError("Agil search slot"));
+        };
+        const waiter = () => {
+          signal?.removeEventListener("abort", leave);
+          resolve(makeRelease());
+        };
+        waiters.push(waiter);
+        signal?.addEventListener("abort", leave, { once: true });
       });
     },
     get inFlight() {
@@ -396,36 +409,15 @@ function createAgilInflightLimiter(resolveLimit: () => number): AgilInflightLimi
 
 const agilSearchRequestLimiter = createAgilInflightLimiter(resolveAgilMaxInflightSearchRequests);
 
-export function resetAgilInflightLimiterForTests(): void {
-  agilSearchRequestLimiter.reset();
-}
-
-export function readAgilInflightLimiterStateForTests(): {
-  inFlight: number;
-  queued: number;
-  max: number;
-} {
-  return {
-    inFlight: agilSearchRequestLimiter.inFlight,
-    queued: agilSearchRequestLimiter.queued,
-    max: AGIL_CONCURRENCY.maxInflightSearchRequests,
-  };
-}
-
 /*
  * The three values a token is minted from, and why they are worth keeping.
  *
  * Agil does not hold a session for us. `refreshAgilToken` mints a bearer over
  * plain HTTP from `userCode`, `internalCode` and `ip` — no cookie, no browser.
- * The shared Chrome is only a *bootstrap*: it is where those three values were
+ * The shared Chrome is only a *bootstrap*: it is where those three values are
  * first read out of localStorage, and they are account identifiers that do not
- * change between restarts.
- *
- * Keeping them in memory alone meant every restart opened a CDP tab to learn
- * them again, and the prewarm loop repeated it at startup +10s. On 2026-08-14
- * the runner was being SIGKILLed every few minutes, so the `finally` that closes
- * those tabs never ran: renderers went 8 → 30 and Chrome reached 383 of its 384
- * task ceiling, at which point clone() fails inside it and CDP calls hang.
+ * change between restarts. Kept on disk, they spare every restart a CDP tab in
+ * the shared Chrome, which a runner killed before its `finally` never closes.
  *
  * The token itself is deliberately NOT persisted. It is short-lived and
  * re-minted on demand, so a file on disk would be a credential at rest for no
@@ -475,7 +467,6 @@ async function writePersistedAgilIdentity(identity: AgilIdentity): Promise<void>
   }
 }
 
-let playwrightPromise: Promise<typeof import("playwright")> | undefined;
 let cachedSession: AgilSessionData | undefined;
 let pendingSessionPromise: Promise<AgilSessionData> | undefined;
 let cachedAgilApimSubscriptionKey: string | undefined;
@@ -497,13 +488,19 @@ function sha1Hex(input: string): string {
   return hasher.digest("hex");
 }
 
+/*
+ * A day of a range is asked once more when it fails, unless no GDS answered
+ * it: every GDS was then asked already, each request once more on a new
+ * connection when nothing came back, and asking the day again would only
+ * double its requests and its wait.
+ */
 async function searchLocalAgilExactWithRetry(request: SearchRequest): Promise<ProviderSearchResult> {
   let attempt = 0;
   while (true) {
     try {
       return await searchLocalAgilExact(request);
     } catch (error) {
-      if (attempt >= AGIL_RANGE_DAY_RETRY_ATTEMPTS) {
+      if (attempt >= AGIL_RANGE_DAY_RETRY_ATTEMPTS || error instanceof AgilNoGdsAnsweredError || isProviderRequestCancelled(error)) {
         throw error;
       }
 
@@ -523,7 +520,7 @@ function agilBundlePriority(url: string): number {
   return 3;
 }
 
-export function parseAgilApimSubscriptionKeyFromFrontendBundle(text: string): string | undefined {
+function parseAgilApimSubscriptionKeyFromFrontendBundle(text: string): string | undefined {
   const directMatch = text.match(/urlHeaderMotor:"([^"]+)"/i)?.[1]?.trim();
   if (directMatch) {
     return directMatch;
@@ -609,11 +606,6 @@ async function resolveAgilApimSubscriptionKey(): Promise<string> {
   return agilApimSubscriptionKeyPromise;
 }
 
-export function resetAgilApimSubscriptionKeyCacheForTests(): void {
-  cachedAgilApimSubscriptionKey = undefined;
-  agilApimSubscriptionKeyPromise = undefined;
-}
-
 function decodeJwtExpiry(token: string): number {
   const payload = token.split(".")[1];
   if (!payload) {
@@ -689,10 +681,6 @@ function extractChromeUserDataDirsFromCommandLines(commandLines: string[]): stri
   return candidates;
 }
 
-export function extractAgilChromeUserDataDirsFromCommandLinesForTests(commandLines: string[]): string[] {
-  return extractChromeUserDataDirsFromCommandLines(commandLines);
-}
-
 function extractChromeDebugPortsFromCommandLines(commandLines: string[]): number[] {
   const ports: number[] = [];
   const seen = new Set<number>();
@@ -713,10 +701,6 @@ function extractChromeDebugPortsFromCommandLines(commandLines: string[]): number
   }
 
   return ports;
-}
-
-export function extractAgilChromeDebugPortsFromCommandLinesForTests(commandLines: string[]): number[] {
-  return extractChromeDebugPortsFromCommandLines(commandLines);
 }
 
 function runningChromeProcessDiscoveryEnabled(): boolean {
@@ -792,7 +776,7 @@ function readAgilChromeUserDataDirCandidates(): string[] {
   return candidates;
 }
 
-export function resolveAgilChromeLaunchOptions(): ChromeLaunchOptions {
+function resolveAgilChromeLaunchOptions(): ChromeLaunchOptions {
   const userDataDir = readAgilChromeUserDataDirCandidates()[0]
     ?? join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
   const profileDirectory = process.env.AGIL_CHROME_PROFILE?.trim() || undefined;
@@ -808,12 +792,12 @@ function resolveBrowserUserDataDir(): string {
     ?? join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 }
 
-export interface AgilBrowserEndpointEnvironment {
+interface AgilBrowserEndpointEnvironment {
   AGIL_BROWSER_URL?: string;
   AGIL_BROWSER_WS_ENDPOINT?: string;
 }
 
-export function resolveAgilBrowserEndpoint(
+function resolveAgilBrowserEndpoint(
   env: AgilBrowserEndpointEnvironment = process.env as AgilBrowserEndpointEnvironment,
   platform = process.platform,
 ): string | undefined {
@@ -831,7 +815,7 @@ export function resolveAgilBrowserEndpoint(
 }
 
 function resolveAgilBrowserConnectTimeoutMs(): number {
-  return Math.max(500, Number(process.env.AGIL_BROWSER_CONNECT_TIMEOUT_MS ?? 2500));
+  return envNumber("AGIL_BROWSER_CONNECT_TIMEOUT_MS", 2500, { min: 500 });
 }
 
 function resolveChromeDevToolsBrowserWsEndpoint(userDataDir: string): string | undefined {
@@ -854,10 +838,6 @@ function resolveChromeDevToolsBrowserWsEndpoint(userDataDir: string): string | u
   } catch {
     return undefined;
   }
-}
-
-export function resolveAgilChromeDevToolsBrowserWsEndpointForTests(userDataDir: string): string | undefined {
-  return resolveChromeDevToolsBrowserWsEndpoint(userDataDir);
 }
 
 async function resolveChromeDevToolsBrowserWsEndpointFromPort(port: number): Promise<string | undefined> {
@@ -994,6 +974,16 @@ async function createCdpClient(endpoint: string, timeoutMs: number): Promise<Cdp
     if (typeof message.id === "number") {
       const waiter = pending.get(message.id);
       if (!waiter) {
+        /* A target created after its request timed out has no owner left to
+           close it. */
+        const lateTargetId = (message.result as { targetId?: unknown } | undefined)?.targetId;
+        if (typeof lateTargetId === "string") {
+          try {
+            socket.send(JSON.stringify({ id: nextId++, method: "Target.closeTarget", params: { targetId: lateTargetId } }));
+          } catch {
+            // The socket is already closing.
+          }
+        }
         return;
       }
 
@@ -1025,7 +1015,16 @@ async function createCdpClient(endpoint: string, timeoutMs: number): Promise<Cdp
   });
 
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Chrome DevTools websocket did not open in time.")), timeoutMs);
+    const timer = setTimeout(() => {
+      /* A socket that opens after the caller gave up would stay connected to
+         the shared Chrome for the life of the process. */
+      try {
+        socket.close();
+      } catch {
+        // Already closed.
+      }
+      reject(new Error("Chrome DevTools websocket did not open in time."));
+    }, timeoutMs);
     socket.addEventListener("open", () => {
       clearTimeout(timer);
       resolve();
@@ -1047,7 +1046,7 @@ async function createCdpClient(endpoint: string, timeoutMs: number): Promise<Cdp
         // Ignore close failures.
       }
     },
-    send: (method, params = {}, sessionId) => {
+    send: (method, params = {}, sessionId, commandTimeoutMs = timeoutMs) => {
       const id = nextId;
       nextId += 1;
       const payload: Record<string, unknown> = {
@@ -1064,7 +1063,7 @@ async function createCdpClient(endpoint: string, timeoutMs: number): Promise<Cdp
         const timer = setTimeout(() => {
           pending.delete(id);
           reject(new Error(`${method} timed out.`));
-        }, timeoutMs);
+        }, commandTimeoutMs);
         pending.set(id, {
           method,
           resolve,
@@ -1148,6 +1147,7 @@ async function readAgilStorageSnapshotFromDevToolsEndpoint(endpoint: string): Pr
         throw new Error("Chrome DevTools did not create a target.");
       }
 
+      const forgetTarget = trackOpenBrowserTarget(() => client.send("Target.closeTarget", { targetId }));
       try {
         const attached = await client.send("Target.attachToTarget", {
           targetId,
@@ -1160,11 +1160,15 @@ async function readAgilStorageSnapshotFromDevToolsEndpoint(endpoint: string): Pr
 
         await client.send("Page.enable", {}, sessionId);
         await client.send("Runtime.enable", {}, sessionId);
-        const domReady = client.waitForEvent("Page.domContentEventFired", sessionId, 30000).catch(() => undefined);
-        await client.send("Page.navigate", { url: origin }, sessionId);
+        const domReady = client.waitForEvent("Page.domContentEventFired", sessionId, AGIL_STORAGE_PAGE_LOAD_TIMEOUT_MS)
+          .catch(() => undefined);
+        /* Chrome answers `Page.navigate` once the page's response has arrived,
+           so the provider's own latency sits inside this call. */
+        await client.send("Page.navigate", { url: origin }, sessionId, AGIL_STORAGE_PAGE_LOAD_TIMEOUT_MS);
         await domReady;
         return await waitForAgilStorageSnapshotInCdpSession(client, sessionId);
       } finally {
+        forgetTarget();
         await client.send("Target.closeTarget", { targetId }).catch(() => undefined);
       }
     });
@@ -1178,17 +1182,9 @@ function temporaryChromeStorageFallbackEnabled(): boolean {
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
-export function isAgilTemporaryChromeStorageFallbackEnabledForTests(): boolean {
-  return temporaryChromeStorageFallbackEnabled();
-}
-
 function rawChromeStorageFileScanEnabled(): boolean {
   const value = String(process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN ?? "0").trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes" || value === "on";
-}
-
-export function isAgilRawChromeStorageFileScanEnabledForTests(): boolean {
-  return rawChromeStorageFileScanEnabled();
 }
 
 function readChromeProfileName(userDataDir = resolveBrowserUserDataDir()): string {
@@ -1251,10 +1247,6 @@ function readChromeProfileCandidates(userDataDir = resolveBrowserUserDataDir()):
 function shouldScanAllChromeProfilesForAgilStorage(): boolean {
   const value = String(process.env.AGIL_SCAN_ALL_CHROME_PROFILES ?? "0").trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes" || value === "on";
-}
-
-export function readAgilChromeProfileCandidatesForTests(): string[] {
-  return readChromeProfileCandidates();
 }
 
 function findChromeExecutable(): string {
@@ -1358,15 +1350,6 @@ function prepareTemporaryChromeProfile(userDataDir: string, profileName: string)
   return tempRoot;
 }
 
-export function prepareTemporaryAgilChromeProfileForTests(userDataDir: string, profileName: string): string {
-  return prepareTemporaryChromeProfile(userDataDir, profileName);
-}
-
-export async function cleanupTemporaryAgilChromeProfileForTests(userDataDir: string): Promise<void> {
-  await removePathWithRetries(userDataDir, 6, 250);
-  unregisterActiveTempArtifact(userDataDir);
-}
-
 function launchChromeForCdp(userDataDir: string, profileName: string, port: number): Bun.NullSubprocess {
   const chromePath = findChromeExecutable();
   const args = [
@@ -1408,14 +1391,6 @@ async function waitForDebugger(port: number): Promise<void> {
   throw new Error("Chrome debugger port did not open in time.");
 }
 
-async function getPlaywright(): Promise<typeof import("playwright")> {
-  if (!playwrightPromise) {
-    playwrightPromise = import("playwright");
-  }
-
-  return playwrightPromise;
-}
-
 async function cleanupTemporaryChromeLaunch(userDataDir: string, chrome?: Bun.NullSubprocess): Promise<void> {
   if (chrome) {
     try {
@@ -1431,32 +1406,23 @@ async function cleanupTemporaryChromeLaunch(userDataDir: string, chrome?: Bun.Nu
   unregisterActiveTempArtifact(userDataDir);
 }
 
+/*
+ * Every Agil request, under `AGIL_HTTP_TIMEOUT_MS` for all of it, and sent once
+ * more on a new connection when it got no answer (`fetchProvider`). A GDS
+ * search that died that way would take all of that GDS's fares with it.
+ * Nothing Agil is asked here (a token, a station lookup, the start of a
+ * search, a search) changes anything on its side, so asking again can neither
+ * repeat an effect nor count a fare twice.
+ */
 async function fetchAgil(
   url: string,
   init: RequestInit,
   label: string,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), AGIL_HTTP_TIMEOUT_MS);
   const headers = new Headers(init.headers);
   headers.set("Ocp-Apim-Subscription-Key", await resolveAgilApimSubscriptionKey());
   recordProviderFirstHttpRequest(label);
-
-  try {
-    return await fetch(url, {
-      ...init,
-      headers,
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
-      throw new Error(`${label} timed out after ${AGIL_HTTP_TIMEOUT_MS}ms`);
-    }
-
-    throw new Error(`${label} failed before receiving a response.`);
-  } finally {
-    clearTimeout(timeout);
-  }
+  return fetchProvider(url, { ...init, headers }, { label, timeoutMs: AGIL_HTTP_TIMEOUT_MS });
 }
 
 async function readAgilStorageSnapshotFromNavigable(
@@ -1493,84 +1459,6 @@ async function readAgilStorageSnapshotFromNavigable(
   }
 
   return merged;
-}
-
-export async function readAgilStorageSnapshotFromPage(
-  page: Pick<Page, "goto" | "waitForFunction" | "evaluate">,
-): Promise<BrowserStorageSnapshot> {
-  return readAgilStorageSnapshotFromNavigable(async (origin) => {
-    await page.goto(origin, {
-      waitUntil: "domcontentloaded",
-      timeout: 30000,
-    });
-    try {
-      await page.waitForFunction(() => (
-        Boolean(localStorage.getItem("tokenSearchFlight"))
-        || Boolean(localStorage.getItem("tokenTravelC"))
-        || Boolean(localStorage.getItem("user_data"))
-        || Boolean(localStorage.getItem("ip"))
-      ), {
-        timeout: 5000,
-      });
-    } catch {
-      // Some origins may not persist data for the active session.
-    }
-
-    return page.evaluate(() => ({
-      tokenSearchFlight: localStorage.getItem("tokenSearchFlight")
-        || localStorage.getItem("tokenTravelC")
-        || "",
-      userData: localStorage.getItem("user_data") || "",
-      ip: localStorage.getItem("ip") || "",
-    }));
-  });
-}
-
-async function readAgilStorageSnapshotFromContext(
-  context: Pick<BrowserContext, "newPage">,
-): Promise<BrowserStorageSnapshot> {
-  return readAgilStorageSnapshotFromNavigable(async (origin) => {
-    const page = await context.newPage();
-    try {
-      await page.goto(origin, {
-        waitUntil: "domcontentloaded",
-        timeout: 30000,
-      });
-      try {
-        await page.waitForFunction(() => (
-          Boolean(localStorage.getItem("tokenSearchFlight"))
-          || Boolean(localStorage.getItem("tokenTravelC"))
-          || Boolean(localStorage.getItem("user_data"))
-          || Boolean(localStorage.getItem("ip"))
-        ), {
-          timeout: 5000,
-        });
-      } catch {
-        // Some origins may not persist data for the active session.
-      }
-
-      return await page.evaluate(() => ({
-        tokenSearchFlight: localStorage.getItem("tokenSearchFlight")
-          || localStorage.getItem("tokenTravelC")
-          || "",
-        userData: localStorage.getItem("user_data") || "",
-        ip: localStorage.getItem("ip") || "",
-      }));
-    } finally {
-      await page.close().catch(() => undefined);
-    }
-  });
-}
-
-async function disconnectBrowser(browser: Browser | undefined): Promise<void> {
-  if (!browser) {
-    return;
-  }
-
-  const maybeDisconnectable = browser as Browser & { disconnect?: () => void | Promise<void> };
-  if (typeof maybeDisconnectable.disconnect === "function") {
-    await Promise.resolve(maybeDisconnectable.disconnect()).catch(() => undefined);
-  }
 }
 
 const AGIL_STORAGE_ORIGIN_HOSTS = new Set(
@@ -1795,42 +1683,32 @@ function pickBestAgilStorageSnapshotCandidate(
 async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> {
   const userDataDirs = readAgilChromeUserDataDirCandidates();
   const failures: string[] = [];
+  /* One Chrome is often reachable through several of the sources below (the
+     configured endpoint and its profile's `DevToolsActivePort`); each read opens
+     a tab in it, so a browser that failed once is not asked again. */
+  const triedEndpoints = new Set<string>();
 
   const browserEndpoint = resolveAgilBrowserEndpoint();
   if (browserEndpoint) {
-    let browser: Browser | undefined;
-    try {
-      const playwright = await getPlaywright();
-      browser = await playwright.chromium.connectOverCDP(browserEndpoint, {
-        timeout: resolveAgilBrowserConnectTimeoutMs(),
-      });
-      const context = browser.contexts()[0];
-      if (!context) {
-        throw new Error("Connected browser exposed no contexts.");
-      }
-      return await readAgilStorageSnapshotFromContext(context);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
-      failures.push(`connected browser: ${detail}`);
-    } finally {
-      await disconnectBrowser(browser);
-    }
-
     const devToolsEndpoint = await resolveAgilBrowserDevToolsWsEndpoint(browserEndpoint);
     if (devToolsEndpoint) {
+      triedEndpoints.add(devToolsEndpoint);
       try {
         return await readAgilStorageSnapshotFromDevToolsEndpoint(devToolsEndpoint);
       } catch (error) {
         const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
-        failures.push(`connected browser direct CDP: ${detail}`);
+        failures.push(`connected browser: ${detail}`);
       }
+    } else {
+      failures.push("connected browser: no DevTools endpoint answered.");
     }
   }
 
   for (const devToolsEndpoint of await readRunningChromeDevToolsBrowserWsEndpoints()) {
-    if (devToolsEndpoint === browserEndpoint) {
+    if (triedEndpoints.has(devToolsEndpoint)) {
       continue;
     }
+    triedEndpoints.add(devToolsEndpoint);
 
     try {
       return await readAgilStorageSnapshotFromDevToolsEndpoint(devToolsEndpoint);
@@ -1842,9 +1720,10 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
 
   for (const userDataDir of userDataDirs) {
     const devToolsEndpoint = resolveChromeDevToolsBrowserWsEndpoint(userDataDir);
-    if (!devToolsEndpoint || devToolsEndpoint === browserEndpoint) {
+    if (!devToolsEndpoint || triedEndpoints.has(devToolsEndpoint)) {
       continue;
     }
+    triedEndpoints.add(devToolsEndpoint);
 
     try {
       return await readAgilStorageSnapshotFromDevToolsEndpoint(devToolsEndpoint);
@@ -1923,11 +1802,7 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
   throw new Error(`Unable to extract Agil session from Chrome profiles. ${failures.join(" | ")}`.trim());
 }
 
-export async function extractAgilBrowserStorageSnapshotForTests(): Promise<BrowserStorageSnapshot> {
-  return extractBrowserStorageSnapshot();
-}
-
-export function parseAgilSessionData(snapshot: BrowserStorageSnapshot): AgilSessionData {
+function parseAgilSessionData(snapshot: BrowserStorageSnapshot): AgilSessionData {
   const capturedAtMs = Date.now();
   const expiresAtMs = snapshot.tokenSearchFlight
     ? decodeJwtExpiry(snapshot.tokenSearchFlight)
@@ -1961,7 +1836,7 @@ export function parseAgilSessionData(snapshot: BrowserStorageSnapshot): AgilSess
   };
 }
 
-export function parseAgilRefreshTokenPayload(payload: { token?: string; accessToken?: string }): string {
+function parseAgilRefreshTokenPayload(payload: { token?: string; accessToken?: string }): string {
   if (typeof payload.token === "string" && payload.token) {
     return payload.token;
   }
@@ -2016,7 +1891,7 @@ async function refreshAgilToken(session: AgilSessionData): Promise<AgilSessionDa
   };
 }
 
-export function sameAgilSessionIdentity(
+function sameAgilSessionIdentity(
   left: Pick<AgilSessionData, "userCode" | "internalCode" | "ip">,
   right: Pick<AgilSessionData, "userCode" | "internalCode" | "ip">,
 ): boolean {
@@ -2025,7 +1900,7 @@ export function sameAgilSessionIdentity(
     && left.ip === right.ip;
 }
 
-export function shouldReuseAgilSession(
+function shouldReuseAgilSession(
   session: Pick<AgilSessionData, "expiresAtMs" | "capturedAtMs">,
   now = Date.now(),
 ): boolean {
@@ -2050,25 +1925,17 @@ async function mintFromIdentity(
 }
 
 /*
- * The identity is all `/auth/api/auth/token` asks for, and it was written to disk
- * the last time the browser was consulted — so the file answers a cold start and
+ * The identity is all `/auth/api/auth/token` asks for, and it is written to disk
+ * whenever the browser is consulted — so the file answers a cold start and
  * every later revalidation alike. Only if the file cannot answer — none written
  * yet, or the identity has been revoked and the mint refused — is a tab worth
  * opening.
  *
- * The mint used to be attempted under `if (!cachedSession)`, which sent ordinary
- * revalidation to the browser: `shouldReuseAgilSession` stops reusing a session
- * `AGIL_SESSION_REVALIDATE_MS` (60s) after it was captured, while the token it
- * holds lives about an hour. From the 61st second on, every call arrived here
- * with a cached session, skipped the mint and went straight to Chrome. On the
- * VPS, whose shared profile is logged out, that extraction throws — so Agil died
- * roughly a minute after each restart while still holding a valid token and a
- * file that mints a new one on demand.
- *
- * Re-stamping `capturedAtMs` against an unchanged identity file is the same
- * confirmation the browser round-trip was there to give (the mirror of the branch
- * below, which today is only reachable after an extraction), so it costs neither
- * an HTTP call nor a tab. */
+ * Revalidation arrives here `AGIL_SESSION_REVALIDATE_MS` after a session was
+ * captured, while its token lives about an hour. Re-stamping `capturedAtMs`
+ * against an unchanged identity file is the same confirmation a browser
+ * round-trip gives (the mirror of the branch below), and it costs neither an
+ * HTTP call nor a tab. */
 async function loadAgilSession(
   now: number,
   options: { forceRefresh?: boolean } = {},
@@ -2122,8 +1989,9 @@ async function getAgilSession(): Promise<AgilSessionData> {
     return cachedSession;
   }
 
+  /* Every search waits on the one load, so no single search's stop aborts it. */
   if (!pendingSessionPromise) {
-    pendingSessionPromise = loadAgilSession(now)
+    pendingSessionPromise = outsideProviderJob(() => loadAgilSession(now))
       .finally(() => {
         pendingSessionPromise = undefined;
       });
@@ -2132,34 +2000,10 @@ async function getAgilSession(): Promise<AgilSessionData> {
   return pendingSessionPromise;
 }
 
-export function resetAgilSessionCacheForTests(): void {
-  cachedSession = undefined;
-  pendingSessionPromise = undefined;
-}
-
-export function setAgilSessionForTests(overrides: {
-  token?: string;
-  expiresAtMs?: number;
-  userCode?: number;
-  internalCode?: string;
-  ip?: string;
-  capturedAtMs?: number;
-} = {}): void {
-  cachedSession = {
-    token: overrides.token ?? "test-agil-token",
-    expiresAtMs: overrides.expiresAtMs ?? Date.now() + (60 * 60 * 1000),
-    userCode: overrides.userCode ?? 1,
-    internalCode: overrides.internalCode ?? "TEST",
-    ip: overrides.ip ?? "127.0.0.1",
-    capturedAtMs: overrides.capturedAtMs ?? Date.now(),
-  };
-  pendingSessionPromise = undefined;
-}
-
 export async function prewarmLocalAgilSession(): Promise<void> {
   const now = Date.now();
   if (!pendingSessionPromise) {
-    pendingSessionPromise = loadAgilSession(now, { forceRefresh: true })
+    pendingSessionPromise = outsideProviderJob(() => loadAgilSession(now, { forceRefresh: true }))
       .finally(() => {
         pendingSessionPromise = undefined;
       });
@@ -2245,7 +2089,7 @@ function requestSummary(request: SearchRequest): string {
   return `${leg.origin}-${leg.destination} ${leg.departureStart || "?"}..${leg.departureEnd || "?"} / ${leg.returnStart || "?"}..${leg.returnEnd || "?"}`;
 }
 
-export async function throwAgilHttpResponseError(
+async function throwAgilHttpResponseError(
   response: Response,
   action: string,
 ): Promise<never> {
@@ -2471,7 +2315,7 @@ function buildMoney(amount: number | undefined, currencyCode: string): Money | u
     : undefined;
 }
 
-export function buildLocalAgilSearchRedirectUrl(request: SearchRequest): string {
+function buildLocalAgilSearchRedirectUrl(request: SearchRequest): string {
   const leg = request.legs[0];
   const url = new URL("https://www.agilsmart.com/home-user/flight-result");
 
@@ -2523,7 +2367,7 @@ function buildOfferSearchRequest(
   };
 }
 
-export function mapAgilGeoTreeLocation(entry: AgilGeoTreeLocation): AgilLocationSuggestion | undefined {
+function mapAgilGeoTreeLocation(entry: AgilGeoTreeLocation): AgilLocationSuggestion | undefined {
   const code = normalizeLocationText(entry.aerocodiata)?.toUpperCase();
   const city = normalizeLocationText(entry.city);
   const country = normalizeLocationText(entry.country);
@@ -2618,7 +2462,7 @@ function buildManualReferenceText(
   currencyCode: string,
 ): string {
   const lines = [
-    "REFERENCIA DE BUSQUEDA",
+    "REFERENCIA DE BÚSQUEDA",
     validatingCarrier ? `Carrier: ${validatingCarrier}` : "",
     `Precio visto: ${currencyCode} ${totalAmount.toFixed(2)}`,
     "",
@@ -2640,7 +2484,7 @@ function buildManualReferenceText(
     lines.push("");
   });
 
-  lines.push("Nota: el boton de Agil abre la busqueda equivalente, no una tarifa exacta bloqueada.");
+  lines.push("Nota: el botón de Agil abre la búsqueda equivalente, no una tarifa exacta bloqueada.");
   return lines.join("\n");
 }
 
@@ -2744,11 +2588,7 @@ function computeAgilTotalAmount(pricingInfo: AgilPricingInfo | undefined): numbe
   return undefined;
 }
 
-export function computeAgilTotalAmountForTests(pricingInfo: unknown): number | undefined {
-  return computeAgilTotalAmount(pricingInfo as AgilPricingInfo | undefined);
-}
-
-export function extractAgilUsdToPenRate(
+function extractAgilUsdToPenRate(
   pricingInfo: AgilPricingInfo | undefined,
   fallbackCurrencyCode?: string,
 ): number | undefined {
@@ -2995,12 +2835,10 @@ async function searchCellWithGds(
       body: JSON.stringify(buildAgilSearchPayload(request, gds)),
     }, `Agil matrix search GDS ${gds}`);
 
-    if (response.status === 401) {
-      throw new Error("AGIL_TOKEN_EXPIRED");
-    }
-
+    /* An error status is a GDS that failed, as in an exact search, and not a
+       GDS that has no fare for the cell. */
     if (!response.ok) {
-      return undefined;
+      await throwAgilHttpResponseError(response, `Agil GDS ${gds}`);
     }
 
     const json = await response.json() as AgilSearchResponse;
@@ -3048,6 +2886,25 @@ async function searchGroupsWithGds(
   }
 }
 
+/*
+ * The service log's account of a part left out of a search (a GDS, or a
+ * matrix cell): the request, the public reason, how long the attempt took and
+ * the error chain behind it, none of which the desk receives.
+ */
+function logAgilOmission(part: string, request: SearchRequest, error: unknown, startedAt: number): void {
+  /* A part of a search that was stopped was not omitted: nobody wants it. */
+  if (isProviderRequestCancelled(error)) {
+    return;
+  }
+
+  console.warn(
+    `Agil ${part} omitted: ${requestSummary(request)} `
+    + `reason=${providerDegradedReasonFromError(error)} `
+    + `afterMs=${Math.round(performance.now() - startedAt)} `
+    + `detail=${describeErrorChain(error)}`,
+  );
+}
+
 async function startAgilSearch(
   session: AgilSessionData,
   request: SearchRequest,
@@ -3067,56 +2924,62 @@ async function startAgilSearch(
   }
 }
 
-async function searchGroupsAcrossGds(
+/*
+ * No GDS answered a search: every one of them failed. It carries the first
+ * GDS's message, so the provider fails with that GDS's public reason, and the
+ * GDS's error as its cause, for the service log.
+ */
+class AgilNoGdsAnsweredError extends Error {
+  override name = "AgilNoGdsAnsweredError";
+
+  constructor(firstFailure: unknown) {
+    super(firstFailure instanceof Error ? firstFailure.message : String(firstFailure), { cause: firstFailure });
+  }
+}
+
+interface AgilGdsAnswers<T> {
+  answers: T[];
+  /** The GDS that failed while another answered. */
+  omitted: Array<{ gds: number; error: unknown }>;
+}
+
+/*
+ * One search asked of every GDS. A GDS that fails is left out of it and the
+ * service log says why; the search fails only when no GDS answered at all. An
+ * expired token is renewed once and the whole search asked again.
+ */
+async function searchEveryGds<T>(
   baseSession: AgilSessionData,
   request: SearchRequest,
-): Promise<AgilExactSearchOutcome> {
+  searchGds: (session: AgilSessionData, gds: number) => Promise<T>,
+): Promise<AgilGdsAnswers<T>> {
   let session = baseSession;
 
-  const searchAll = async (): Promise<AgilExactSearchOutcome> => {
+  const searchAll = async (): Promise<AgilGdsAnswers<T>> => {
     await startAgilSearch(session, request);
 
-    const outcomes = await mapConcurrent(AGIL_GDS_LIST, AGIL_CONCURRENCY.gdsSearch, async (gds) => {
+    type GdsOutcome = { gds: number; answered: true; answer: T } | { gds: number; answered: false; error: unknown };
+    const outcomes = await mapConcurrent(AGIL_GDS_LIST, AGIL_CONCURRENCY.gdsSearch, async (gds): Promise<GdsOutcome> => {
+      const startedAt = performance.now();
       try {
-        return {
-          gds,
-          groups: await searchGroupsWithGds(session, request, gds),
-        };
+        return { gds, answered: true, answer: await searchGds(session, gds) };
       } catch (error) {
         if (error instanceof Error && error.message === "AGIL_TOKEN_EXPIRED") {
           throw error;
         }
 
-        return {
-          gds,
-          groups: [],
-          error: providerPublicFailureMessage("agil-local", error),
-        };
+        logAgilOmission(`GDS ${gds}`, request, error, startedAt);
+        return { gds, answered: false, error };
       }
     });
-
-    const errorOutcomes = outcomes.filter((outcome) => "error" in outcome);
-    const warnings = errorOutcomes
-      .filter((outcome) => "error" in outcome)
-      .map((outcome) => `Agil GDS ${outcome.gds} omitted: ${outcome.error}`);
-
-    if (errorOutcomes.length === outcomes.length) {
-      const firstError = errorOutcomes[0]?.error;
-      return {
-        groups: [],
-        warnings: uniqueStrings([
-          `Agil rejected this search in all configured GDS: ${requestSummary(request)}.`,
-          firstError ? `Agil detail: ${firstError}` : "",
-        ]),
-        partial: true,
-      };
+    const answers = outcomes.flatMap((outcome) => (outcome.answered ? [outcome.answer] : []));
+    const omitted = outcomes.flatMap((outcome) => (outcome.answered ? [] : [{ gds: outcome.gds, error: outcome.error }]));
+    const [firstOmitted] = omitted;
+    if (answers.length === 0 && firstOmitted) {
+      throw new AgilNoGdsAnsweredError(firstOmitted.error);
     }
 
-    return {
-      groups: outcomes.flatMap((outcome) => outcome.groups),
-      warnings: uniqueStrings(warnings),
-      partial: warnings.length > 0,
-    };
+    return { answers, omitted };
   };
 
   try {
@@ -3132,41 +2995,50 @@ async function searchGroupsAcrossGds(
   }
 }
 
-async function searchCellPrice(baseSession: AgilSessionData, request: SearchRequest): Promise<AgilCellQuote | undefined> {
-  let session = baseSession;
+async function searchGroupsAcrossGds(
+  baseSession: AgilSessionData,
+  request: SearchRequest,
+): Promise<AgilExactSearchOutcome> {
+  const { answers, omitted } = await searchEveryGds(
+    baseSession,
+    request,
+    (session, gds) => searchGroupsWithGds(session, request, gds),
+  );
 
-  const searchAll = async () => {
-    await startAgilSearch(session, request);
-
-    const results = await mapConcurrent(
-      AGIL_GDS_LIST,
-      AGIL_CONCURRENCY.gdsSearch,
-      async (gds) => searchCellWithGds(session, request, gds),
-    );
-    return results.reduce<AgilCellQuote | undefined>((best, current) => {
-      if (!current) {
-        return best;
-      }
-
-      if (!best || current.amount < best.amount) {
-        return current;
-      }
-
-      return best;
-    }, undefined);
+  return {
+    groups: answers.flat(),
+    warnings: uniqueStrings(omitted.map(({ gds, error }) =>
+      `Agil GDS ${gds} omitted: ${providerPublicFailureMessage("agil-local", error)}`)),
+    partial: omitted.length > 0,
   };
+}
 
-  try {
-    return await searchAll();
-  } catch (error) {
-    if (error instanceof Error && error.message === "AGIL_TOKEN_EXPIRED") {
-      session = await refreshAgilToken(session);
-      cachedSession = session;
-      return searchAll();
+interface AgilCellSearchOutcome {
+  /** The cheapest fare of the GDS that answered, when any had one. */
+  quote?: AgilCellQuote;
+  /** A GDS failed while another answered. */
+  partial: boolean;
+}
+
+async function searchCellPrice(baseSession: AgilSessionData, request: SearchRequest): Promise<AgilCellSearchOutcome> {
+  const { answers, omitted } = await searchEveryGds(
+    baseSession,
+    request,
+    (session, gds) => searchCellWithGds(session, request, gds),
+  );
+  const quote = answers.reduce<AgilCellQuote | undefined>((best, current) => {
+    if (!current) {
+      return best;
     }
 
-    throw error;
-  }
+    if (!best || current.amount < best.amount) {
+      return current;
+    }
+
+    return best;
+  }, undefined);
+
+  return { quote, partial: omitted.length > 0 };
 }
 
 function buildAgilMatrixCellFromQuote(
@@ -3196,7 +3068,7 @@ function buildAgilMatrixCellFromQuote(
   };
 }
 
-export async function searchLocalAgilExact(request: SearchRequest): Promise<ProviderSearchResult> {
+async function searchLocalAgilExact(request: SearchRequest): Promise<ProviderSearchResult> {
   const session = await getAgilSession();
   const outcome = await searchGroupsAcrossGds(session, request);
   const offers = dedupeAgilOffers(
@@ -3215,31 +3087,6 @@ export async function searchLocalAgilExact(request: SearchRequest): Promise<Prov
   };
 }
 
-export function createLocalAgilSearchDraft(
-  request: SearchRequest,
-  providerMeta: ProviderMeta,
-): SearchResponse {
-  const requestedAt = new Date().toISOString();
-  const warning = request.searchMode === "stay-range"
-    ? "Consultando Agil en paralelo. Los resultados se iran agregando."
-    : "Consultando Agil. Los resultados se iran agregando.";
-
-  return {
-    offers: [],
-    allOffers: [],
-    searchMeta: {
-      requestedAt,
-      completedAt: requestedAt,
-      providersUsed: ["agil-local"],
-      warnings: [warning],
-      partial: true,
-      searchState: "search_partial",
-    },
-    providerMeta,
-    warnings: [warning],
-  };
-}
-
 export async function resolveLocalAgilExactProgressive(
   request: SearchRequest,
   onUpdate?: (result: ProviderSearchResult) => boolean | void,
@@ -3247,19 +3094,24 @@ export async function resolveLocalAgilExactProgressive(
   let session = await getAgilSession();
   // Mapping is quadratic when it re-runs over every accumulated group after each
   // GDS reply, so the mapped offers are memoized and only the newly resolved
-  // groups are appended. Groups still land in completion order, which keeps the
+  // groups are appended. Groups land in completion order, which keeps the
   // deduped result identical to mapping everything at the end.
   const mappedOffers: CanonicalOffer[] = [];
   const warnings: string[] = [];
   let partial = false;
   let stopRequested = false;
+  /* A GDS that answered, fares or none, and why each of the others failed. */
+  const answeredGds = new Set<number>();
+  const failedGds = new Map<number, unknown>();
 
   const searchAll = async (): Promise<void> => {
     await startAgilSearch(session, request);
 
     await mapConcurrent(AGIL_GDS_LIST, AGIL_CONCURRENCY.gdsSearch, async (gds) => {
+      const startedAt = performance.now();
       try {
         const resolvedGroups = await searchGroupsWithGds(session, request, gds);
+        answeredGds.add(gds);
         for (const group of resolvedGroups) {
           mappedOffers.push(...mapGroupToOffers(group, request));
         }
@@ -3272,11 +3124,10 @@ export async function resolveLocalAgilExactProgressive(
           stopRequested = true;
         }
       } catch (error) {
+        logAgilOmission(`GDS ${gds}`, request, error, startedAt);
+        failedGds.set(gds, error);
         partial = true;
-        const warning = error instanceof Error
-          ? `Agil GDS ${gds} omitted: ${error.message}`
-          : `Agil GDS ${gds} omitted due to an unknown error.`;
-        warnings.push(warning);
+        warnings.push(`Agil GDS ${gds} omitted: ${providerPublicFailureMessage("agil-local", error)}`);
 
         if (onUpdate?.({
           offers: dedupeAgilOffers(mappedOffers),
@@ -3297,12 +3148,17 @@ export async function resolveLocalAgilExactProgressive(
     if (error instanceof Error && error.message === "AGIL_TOKEN_EXPIRED") {
       session = await refreshAgilToken(session);
       cachedSession = session;
-      // The retry keeps whatever was already mapped, exactly as the group
-      // accumulator did; dedupeAgilOffers drops the replayed duplicates.
+      // The retry keeps whatever was already mapped; dedupeAgilOffers drops the
+      // replayed duplicates.
       await searchAll();
     } else {
       throw error;
     }
+  }
+
+  const firstFailedGds = AGIL_GDS_LIST.find((gds) => failedGds.has(gds));
+  if (answeredGds.size === 0 && firstFailedGds !== undefined) {
+    throw new AgilNoGdsAnsweredError(failedGds.get(firstFailedGds));
   }
 
   const offers = dedupeAgilOffers(mappedOffers);
@@ -3323,42 +3179,6 @@ function enumerateStayRangeRequests(request: SearchRequest): SearchRequest[] {
   return enumerateUsefulFlexibleRequests(request);
 }
 
-export async function searchLocalAgilRange(request: SearchRequest): Promise<ProviderSearchResult> {
-  const candidates = enumerateStayRangeRequests(request);
-
-  const outcomes = await mapConcurrent(candidates, AGIL_CONCURRENCY.rangeSearch, async (derivedRequest) => {
-    try {
-      return {
-        result: await searchLocalAgilExactWithRetry(derivedRequest),
-      };
-    } catch (error) {
-      return {
-        error: providerPublicFailureMessage("agil-local", error),
-      };
-    }
-  });
-
-  const warnings = uniqueStrings([
-    ...outcomes.flatMap((outcome) => outcome.result?.warnings ?? []),
-    ...outcomes.flatMap((outcome) => outcome.error ? [outcome.error] : []),
-  ]);
-  const partial = outcomes.some((outcome) => Boolean(outcome.error))
-    || outcomes.some((outcome) => outcome.result?.partial);
-  const offers = dedupeAgilOffers(
-    outcomes.flatMap((outcome) => outcome.result?.offers ?? []),
-  );
-
-  if (offers.length === 0 && warnings.length === 0) {
-    warnings.push("Agil returned no offers for this date range.");
-  }
-
-  return {
-    offers,
-    warnings,
-    partial,
-  };
-}
-
 export async function resolveLocalAgilRangeProgressive(
   request: SearchRequest,
   onUpdate?: (result: ProviderSearchResult) => boolean | void,
@@ -3368,12 +3188,16 @@ export async function resolveLocalAgilRangeProgressive(
   const warnings: string[] = [];
   let partial = false;
   let stopRequested = false;
+  /* How many days answered, fares or none, and why each of the others failed. */
+  let answeredDays = 0;
+  const failedDays = new Map<SearchRequest, unknown>();
 
   await mapConcurrent(candidates, AGIL_CONCURRENCY.rangeSearch, async (derivedRequest) => {
     let progressOffers: CanonicalOffer[] = [];
     let progressWarnings: string[] = [];
     try {
       const result = await searchLocalAgilExactWithRetry(derivedRequest);
+      answeredDays += 1;
       aggregatedOffers.push(...result.offers);
       progressOffers = result.offers;
       progressWarnings = result.warnings;
@@ -3382,6 +3206,7 @@ export async function resolveLocalAgilRangeProgressive(
       }
       warnings.push(...result.warnings);
     } catch (error) {
+      failedDays.set(derivedRequest, error);
       const warning = providerPublicFailureMessage("agil-local", error);
       partial = true;
       warnings.push(warning);
@@ -3399,6 +3224,12 @@ export async function resolveLocalAgilRangeProgressive(
   }, {
     canContinue: () => !stopRequested,
   });
+
+  /* No day answered: the provider failed, with the first day's reason. */
+  const firstFailedDay = candidates.find((candidate) => failedDays.has(candidate));
+  if (answeredDays === 0 && firstFailedDay) {
+    throw failedDays.get(firstFailedDay);
+  }
 
   const offers = dedupeAgilOffers(aggregatedOffers);
   const finalWarnings = uniqueStrings([...warnings]);
@@ -3488,11 +3319,19 @@ export async function resolveLocalAgilMatrixProgressive(
   const session = await getAgilSession();
   let partial = false;
   let stopRequested = false;
+  /* How many cells answered, fares or none, and why each of the others failed. */
+  let answeredCells = 0;
+  const failedCells = new Map<string, unknown>();
   const prioritizedCells = prioritizeMatrixLoadingCells(draft.cells, draft.axes, request.tripType);
 
   const resolvedLoadingCells = await mapConcurrent(prioritizedCells, AGIL_CONCURRENCY.matrixCell, async (cell) => {
+    const startedAt = performance.now();
     try {
-      const quote = await searchCellPrice(session, cell.derivedRequest);
+      const { quote, partial: cellPartial } = await searchCellPrice(session, cell.derivedRequest);
+      answeredCells += 1;
+      if (cellPartial) {
+        partial = true;
+      }
       const nextCell = quote
         ? buildAgilMatrixCellFromQuote(cell, quote)
         : {
@@ -3508,6 +3347,8 @@ export async function resolveLocalAgilMatrixProgressive(
       }
       return nextCell;
     } catch (error) {
+      logAgilOmission("matrix cell", cell.derivedRequest, error, startedAt);
+      failedCells.set(cell.key, error);
       partial = true;
       const nextCell = {
         ...cell,
@@ -3524,6 +3365,13 @@ export async function resolveLocalAgilMatrixProgressive(
   }, {
     canContinue: () => !stopRequested,
   });
+
+  /* No cell answered: the provider failed, with the first cell's reason. */
+  const firstFailedCell = prioritizedCells.find((cell) => failedCells.has(cell.key));
+  if (answeredCells === 0 && firstFailedCell) {
+    throw failedCells.get(firstFailedCell.key);
+  }
+
   const resolvedByKey = new Map(resolvedLoadingCells.map((cell) => [cell.key, cell]));
   const resolvedCells = draft.cells.map((cell) => resolvedByKey.get(cell.key) ?? cell);
 
@@ -3549,12 +3397,4 @@ export async function resolveLocalAgilMatrixProgressive(
     },
     warnings,
   };
-}
-
-export async function buildLocalAgilMatrix(
-  request: SearchRequest,
-  providerMeta: ProviderMeta,
-): Promise<MatrixResponse> {
-  const draft = createLocalAgilMatrixDraft(request, providerMeta);
-  return resolveLocalAgilMatrixProgressive(request, draft);
 }

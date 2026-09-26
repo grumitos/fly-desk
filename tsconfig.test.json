@@ -1,9 +1,4 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "paths": {
-      "@/*": ["./frontend/src/*"]
-    }
-  },
-  "include": ["test/helpers/**/*.ts", "test/ui/**/*.ts"]
+  "include": ["test/**/*.ts", "scripts/run-e2e.ts", "scripts/release-smoke.ts"]
 }

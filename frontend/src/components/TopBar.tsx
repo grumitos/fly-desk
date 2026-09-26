@@ -1,41 +1,41 @@
-import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from "react"
+import { memo, useEffect, useState, type ReactNode } from "react"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useSearchCapacity } from "@/hooks/useSearchCapacity"
+import type { SearchCapacity } from "@/lib/api"
 import { withoutThemeTransition } from "@/lib/reduced-motion"
 
 export const TOPBAR_SEARCH_CONTROLS_ID = "fd-topbar-search-controls"
 
-function getInitialTheme(): "light" | "dark" {
+type Theme = "light" | "dark"
+
+function getInitialTheme(): Theme {
   try {
     const saved = localStorage.getItem("flydesk-theme")
     if (saved === "light" || saved === "dark") return saved
   } catch {
-    // localStorage can be blocked; fall through to the DOM class.
+    // Blocked storage falls back to the light theme `index.html` applied.
   }
 
-  return document.documentElement.classList.contains("dark") ? "dark" : "light"
+  return "light"
 }
 
-function syncTheme(theme: "light" | "dark") {
+/* The cookie is what the server-rendered login page reads, so it is written
+   even where storage is blocked. */
+function syncTheme(theme: Theme) {
   document.documentElement.classList.toggle("dark", theme === "dark")
   document.documentElement.dataset.theme = theme
+  document.cookie = `flydesk_theme=${theme}; Path=/; Max-Age=31536000; SameSite=Lax`
 
   try {
     localStorage.setItem("flydesk-theme", theme)
-    document.cookie = `flydesk_theme=${theme}; Path=/; Max-Age=31536000; SameSite=Lax`
   } catch {
-    return
+    // The page falls back to the light theme on the next load.
   }
 }
 
-function ThemeToggle({
-  theme,
-  setTheme,
-}: {
-  theme: "light" | "dark"
-  setTheme: (theme: "light" | "dark") => void
-}) {
+function ThemeToggle({ theme, setTheme }: { theme: Theme; setTheme: (theme: Theme) => void }) {
   const nextTheme = theme === "dark" ? "light" : "dark"
 
   return (
@@ -48,7 +48,7 @@ function ThemeToggle({
           onClick={() => setTheme(nextTheme)}
           aria-label="Cambiar tema"
           aria-pressed={theme === "dark"}
-          className="fd-capsule-cell fd-theme-toggle"
+          className="fd-capsule-cell"
         >
           <AppIcon name={theme === "dark" ? "sun" : "moon"} />
         </Button>
@@ -58,66 +58,85 @@ function ThemeToggle({
   )
 }
 
-function IconButtonTooltip({
-  children,
-  disabled = false,
-  label,
-}: {
-  children: ReactElement
-  disabled?: boolean
-  label: string
-}) {
+/* What the meter shows and says: the cupos the searches in progress hold, out
+   of the most that can run at once. A search holds one or more; the count
+   never says which search holds how many. */
+function describeCapacity(capacity: SearchCapacity): { used: number; total: number; text: string } {
+  const used = Math.min(capacity.activeUnits, capacity.capacityUnits)
+  const running = capacity.activeSearches === 0
+    ? "ninguna búsqueda en curso"
+    : `${capacity.activeSearches} ${capacity.activeSearches === 1 ? "búsqueda" : "búsquedas"} en curso`
+  const searches = capacity.queuedSearches > 0 ? `${running} · ${capacity.queuedSearches} en espera` : running
+  return { used, total: capacity.capacityUnits, text: `${used} de ${capacity.capacityUnits} cupos en uso · ${searches}` }
+}
+
+/*
+ * The capacity the two agents share, as the title bar reads everything else:
+ * a glyph and a tabular «3/7» in a cell of the capsules' height. It is muted
+ * while nothing runs and in ink while something does; while a search waits
+ * for a cupo it takes the clock and the colours of the «En espera» line. Its
+ * name, value and tooltip say it in words. It follows the runner as the
+ * capacity changes and goes blank, keeping its box, while it cannot be read.
+ */
+function CapacityMeter() {
+  const capacity = useSearchCapacity()
+  const reading = capacity ? describeCapacity(capacity) : null
+  const state = !capacity
+    ? "unknown"
+    : capacity.queuedSearches > 0 ? "waiting" : capacity.activeSearches > 0 ? "busy" : "idle"
+
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        {disabled ? (
-          <span
-            className="inline-flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            tabIndex={0}
-            aria-label={label}
-          >
-            {children}
-          </span>
-        ) : children}
+        <span
+          role="meter"
+          aria-label="Capacidad de búsqueda"
+          aria-valuemin={0}
+          aria-valuemax={reading?.total}
+          aria-valuenow={reading?.used}
+          aria-valuetext={reading?.text}
+          aria-hidden={reading ? undefined : true}
+          tabIndex={reading ? 0 : -1}
+          data-state={state}
+          className="fd-capacity fd-focus-ring"
+        >
+          <AppIcon name={state === "waiting" ? "clock" : "capacity"} />
+          <span className="fd-capacity-count">{reading ? `${reading.used}/${reading.total}` : "0/0"}</span>
+        </span>
       </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
+      {reading && <TooltipContent>{reading.text}</TooltipContent>}
     </Tooltip>
   )
 }
 
-/**
- * Plate 1b draws copy and paste as one capsule and the theme toggle as its own,
- * both 32px on `--secondary` with a 1px `--input` border. In armazón C the
- * capsule breaks into loose buttons (02 §4) — same component, the geometry
- * comes from the container query.
- */
+/* Plate 1b: copy and paste in one capsule, the theme toggle in another; on a
+   phone the capsule breaks into loose buttons by container query (02 §4). */
 function TopBarCapsule({ children }: { children: ReactNode }) {
   return <div className="fd-capsule">{children}</div>
 }
 
 interface TopBarProps {
-  copySearchDisabled?: boolean
+  copySearchDisabled: boolean
+  /** A copy just succeeded: the icon confirms it for the hold of a confirmation. */
+  copyConfirmed: boolean
   /** No configuration is known yet, so Paste reads as dim — but still works. */
-  pasteSearchDimmed?: boolean
-  onCopySearchConfig?: () => void
-  onPasteSearchConfig?: () => void
-  workspaceActive?: boolean
+  pasteSearchDimmed: boolean
+  onCopySearchConfig: () => void
+  onPasteSearchConfig: () => void
+  workspaceActive: boolean
 }
 
-export function TopBar({
-  copySearchDisabled = true,
-  pasteSearchDimmed = true,
+export const TopBar = memo(function TopBar({
+  copySearchDisabled,
+  copyConfirmed,
+  pasteSearchDimmed,
   onCopySearchConfig,
   onPasteSearchConfig,
-  workspaceActive = false,
+  workspaceActive,
 }: TopBarProps) {
-  const [theme, setTheme] = useState<"light" | "dark">(getInitialTheme)
-  const homeHref = useMemo(() => `${window.location.origin}/`, [])
+  const [theme, setTheme] = useState<Theme>(getInitialTheme)
 
-  /* Plate 9b names the theme switch among the things that never animate. Left
-     bare it starts 130 transitions at once — every border, background and text
-     colour in the tree crossfading — which is the opposite of a setting taking
-     effect. The wrapper suppresses them for the swap and restores them after. */
+  /* 9b: the theme swap never animates; the wrapper silences transitions for it. */
   useEffect(() => {
     withoutThemeTransition(() => syncTheme(theme))
   }, [theme])
@@ -126,7 +145,7 @@ export function TopBar({
     <header className="fd-topbar" data-workspace-active={workspaceActive}>
       <div className="fd-topbar-inner">
         <a
-          href={homeHref}
+          href="/"
           aria-label="Abrir Fly Desk"
           title="Abrir Fly Desk"
           className="fd-topbar-brand fd-focus-ring"
@@ -142,35 +161,45 @@ export function TopBar({
         />
 
         <div className="fd-topbar-actions">
+          <CapacityMeter />
           <TopBarCapsule>
-            <IconButtonTooltip
-              disabled={copySearchDisabled}
-              label={copySearchDisabled ? "Completa una búsqueda para copiar la configuración" : "Copiar configuración"}
-            >
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={onCopySearchConfig}
-                disabled={copySearchDisabled}
-                aria-label="Copiar configuración"
-                className={`fd-capsule-cell fd-topbar-copy${copySearchDisabled ? " fd-capsule-cell-dim" : ""}`}
-              >
-                <AppIcon name="copy" />
-              </Button>
-            </IconButtonTooltip>
-            <IconButtonTooltip label="Pegar configuración">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={onPasteSearchConfig}
-                aria-label="Pegar configuración"
-                className={`fd-capsule-cell${pasteSearchDimmed ? " fd-capsule-cell-dim" : ""}`}
-              >
-                <AppIcon name="clipboard" />
-              </Button>
-            </IconButtonTooltip>
+            {/* `aria-disabled` rather than `disabled`: the button stays
+                focusable, so its tooltip can say why it does nothing yet. */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={copySearchDisabled ? undefined : onCopySearchConfig}
+                  aria-disabled={copySearchDisabled || undefined}
+                  aria-label="Copiar configuración"
+                  className={`fd-capsule-cell fd-topbar-copy${copySearchDisabled ? " fd-capsule-cell-dim" : ""}`}
+                >
+                  <AppIcon name={copyConfirmed ? "check" : "copy"} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {copySearchDisabled
+                  ? "Completa una búsqueda para copiar la configuración"
+                  : copyConfirmed ? "Configuración copiada" : "Copiar configuración"}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={onPasteSearchConfig}
+                  aria-label="Pegar configuración"
+                  className={`fd-capsule-cell${pasteSearchDimmed ? " fd-capsule-cell-dim" : ""}`}
+                >
+                  <AppIcon name="clipboard" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Pegar configuración</TooltipContent>
+            </Tooltip>
           </TopBarCapsule>
           <TopBarCapsule>
             <ThemeToggle theme={theme} setTheme={setTheme} />
@@ -179,4 +208,4 @@ export function TopBar({
       </div>
     </header>
   )
-}
+})

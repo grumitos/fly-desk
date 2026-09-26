@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
+import { envFlag, envNumber } from "./env";
 import type { Server as BunServer } from "bun";
-import { timingSafeEqual } from "node:crypto";
 import type { ProviderContext, PurchasePath, SearchRequest } from "./core/types";
 import {
   applyCostamarContextToBrandedSearchUrl,
@@ -13,13 +13,12 @@ import {
   resolveUsableCostamarBrandedToken,
 } from "./provider-context";
 import { resolvePersistPath } from "./runtime-paths";
-import { resolveAcceptedApiAccessTokens } from "./service-auth";
+import { hasAcceptedApiAccessToken } from "./service-auth";
 import { COMPLETED_SEARCH_SESSION_TTL_MS } from "./session-store";
 import {
   hasValidRedirectSession,
+  isTrustedLocalRequest,
   isWebAuthEnabled,
-  shouldTrustLoopbackClient,
-  shouldTrustReverseProxyLoopbackClient,
 } from "./web-auth";
 
 const DEFAULT_REDIRECT_HOST = "127.0.0.1";
@@ -68,7 +67,7 @@ interface SqlCompactJobRow {
   provider_context_key?: string;
 }
 
-export interface RedirectServiceOptions {
+interface RedirectServiceOptions {
   dbPath?: string;
   cacheLookupTimeoutMs?: number;
 }
@@ -144,7 +143,7 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
     <main>
       <section>
         <h1>Renueva la autenticación de Click and Book Plus</h1>
-        <p>Fly Desk no encontro un redirect verificado para abrir esta busqueda en Click and Book Plus.</p>
+        <p>Fly Desk no encontró un redirect verificado para abrir esta búsqueda en Click and Book Plus.</p>
         <p><strong>Motivo:</strong> ${reasonText}</p>
         <p>Abre Click and Book Plus B2B/Chrome, vuelve a autenticarte y reintenta desde Fly Desk.</p>
       </section>
@@ -153,36 +152,16 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
 </html>`, { status: 409 });
 }
 
-function numberFromEnv(name: string, fallback: number, min: number, max: number): number {
-  const parsed = Number(process.env[name]?.trim() ?? "");
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  return Math.max(min, Math.min(max, Math.trunc(parsed)));
-}
-
 function costamarRedirectTotalTimeoutMs(): number {
-  const configured = Number(
-    process.env.CBPLUS_REDIRECT_TOTAL_TIMEOUT_MS?.trim()
-      ?? process.env.COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS
-      ?? DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS,
-  );
-  if (!Number.isFinite(configured)) {
-    return DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS;
-  }
-
-  return Math.max(
-    1_000,
-    Math.min(MAX_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS, Math.trunc(configured)),
-  );
+  return Math.trunc(envNumber(
+    ["CBPLUS_REDIRECT_TOTAL_TIMEOUT_MS", "COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS"],
+    DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS,
+    { min: 1_000, max: MAX_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS },
+  ));
 }
 
 function costamarRedirectTrustUsableToken(): boolean {
-  const configured = process.env.CBPLUS_REDIRECT_TRUST_USABLE_TOKEN?.trim()
-    ?? process.env.COSTAMAR_REDIRECT_TRUST_USABLE_TOKEN?.trim()
-    ?? "1";
-  return configured !== "0";
+  return envFlag(["CBPLUS_REDIRECT_TRUST_USABLE_TOKEN", "COSTAMAR_REDIRECT_TRUST_USABLE_TOKEN"], true);
 }
 
 async function withCostamarRedirectTotalTimeout<T>(promise: Promise<T>): Promise<T> {
@@ -194,7 +173,7 @@ async function withCostamarRedirectTotalTimeout<T>(promise: Promise<T>): Promise
       promise,
       new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(() => {
-          reject(new Error(`La validacion del redirect de Click and Book Plus tardo mas de ${timeoutMs}ms.`));
+          reject(new Error(`La validación del redirect de Click and Book Plus tardó más de ${timeoutMs}ms.`));
         }, timeoutMs);
         if (typeof timeout === "object" && timeout && "unref" in timeout) {
           (timeout as { unref: () => void }).unref();
@@ -473,14 +452,6 @@ function redirect(location: string): Response {
   });
 }
 
-function hasForwardedClientMarker(request: Request): boolean {
-  return Boolean(
-    request.headers.get("x-forwarded-for")?.trim()
-      || request.headers.get("forwarded")?.trim()
-      || request.headers.get("x-real-ip")?.trim(),
-  );
-}
-
 function isLoopbackRemoteAddress(value: string | undefined): boolean {
   const normalized = String(value ?? "").trim().toLowerCase();
   return normalized === "127.0.0.1"
@@ -511,51 +482,6 @@ export function requestWithServerTrustHeaders(request: Request, server: Pick<Bun
   } as RequestInit & { duplex?: "half" });
 }
 
-function isTrustedLocalRequest(request: Request): boolean {
-  if (!shouldTrustLoopbackClient() || request.headers.get("x-flydesk-client-loopback") !== "1") {
-    return false;
-  }
-
-  if (hasForwardedClientMarker(request) && !shouldTrustReverseProxyLoopbackClient()) {
-    return false;
-  }
-
-  return true;
-}
-
-function resolveProvidedApiAccessToken(request: Request): string | undefined {
-  const tokenHeader = String(request.headers.get("x-flydesk-api-token") ?? "").trim();
-  if (tokenHeader) {
-    return tokenHeader;
-  }
-
-  const authorizationHeader = String(request.headers.get("authorization") ?? "").trim();
-  if (authorizationHeader.toLowerCase().startsWith("bearer ")) {
-    const bearer = authorizationHeader.slice("bearer ".length).trim();
-    return bearer || undefined;
-  }
-
-  return undefined;
-}
-
-function hasValidApiAccessToken(request: Request, expectedTokens: readonly string[]): boolean {
-  const providedToken = resolveProvidedApiAccessToken(request);
-  if (!providedToken) {
-    return false;
-  }
-
-  const provided = Buffer.from(providedToken, "utf8");
-
-  return expectedTokens.some((expectedToken) => {
-    const expected = Buffer.from(expectedToken, "utf8");
-    if (expected.length !== provided.length) {
-      return false;
-    }
-
-    return timingSafeEqual(expected, provided);
-  });
-}
-
 function isTrustedRedirectRequest(request: Request): boolean {
   if (isTrustedLocalRequest(request)) {
     return true;
@@ -565,8 +491,7 @@ function isTrustedRedirectRequest(request: Request): boolean {
     return true;
   }
 
-  const tokens = resolveAcceptedApiAccessTokens();
-  return tokens.length > 0 ? hasValidApiAccessToken(request, tokens) : false;
+  return hasAcceptedApiAccessToken(request.headers);
 }
 
 function redirectAuthRequiredResponse(): Response {
@@ -610,8 +535,8 @@ async function resolveRedirectResponse(record: StoredRedirectRecord): Promise<Re
         // Neither the stored purchase path nor the persisted session context keeps a
         // branded token, so parsedToken is normally absent and usability has to be judged
         // on the resolved runtime context, which falls back to the configured token.
-        // Judging it on parsedToken alone left `force` permanently true, so every single
-        // redirect asked the provider for a brand new token.
+        // Judged on parsedToken alone, `force` would be true and every redirect would
+        // ask the provider for a new token.
         const tokenIsUsable = Boolean(
           resolveUsableCostamarBrandedToken(fastContext.token, fastContext.terminalId),
         );
@@ -622,7 +547,7 @@ async function resolveRedirectResponse(record: StoredRedirectRecord): Promise<Re
         // that happens to be valid must never be enough to forward the user to a URL that
         // is not our own branded search.
         if (!redirectRequest) {
-          blockedReason = "No se pudo reconstruir la busqueda Click and Book Plus desde el purchase path.";
+          blockedReason = "No se pudo reconstruir la búsqueda Click and Book Plus desde el purchase path.";
         } else if (!isAllowedCostamarBrandedSearchLocation(location, redirectRequest, fastContext)) {
           blockedReason = "El enlace guardado de Click and Book Plus no pertenece a un origen permitido.";
         } else if (tokenIsUsable && costamarRedirectTrustUsableToken()) {
@@ -701,12 +626,11 @@ export async function routeRedirectRequest(request: Request, options: RedirectSe
   }
 
   const lookupTimeoutMs = options.cacheLookupTimeoutMs
-    ?? numberFromEnv(
+    ?? Math.trunc(envNumber(
       "FLY_DESK_REDIRECT_CACHE_LOOKUP_TIMEOUT_MS",
       DEFAULT_CACHE_LOOKUP_TIMEOUT_MS,
-      0,
-      MAX_CACHE_LOOKUP_TIMEOUT_MS,
-    );
+      { min: 0, max: MAX_CACHE_LOOKUP_TIMEOUT_MS },
+    ));
   let record: StoredRedirectRecord | undefined;
   try {
     record = lookupTimeoutMs > 0
@@ -728,7 +652,7 @@ export function resolveRedirectServerHost(): string {
 }
 
 export function resolveRedirectServerPort(): number {
-  return numberFromEnv("FLY_DESK_REDIRECT_PORT", DEFAULT_REDIRECT_PORT, 1, 65535);
+  return Math.trunc(envNumber("FLY_DESK_REDIRECT_PORT", DEFAULT_REDIRECT_PORT, { min: 1, max: 65535 }));
 }
 
 export function createRedirectServer(options: {

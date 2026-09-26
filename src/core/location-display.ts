@@ -4,10 +4,9 @@
  * It is read three times and each read is a promise: the itinerary line in the
  * detail, the route and the migratory-package title of a commercial quotation
  * — which is a document that leaves the agency — and the flag beside that
- * title, through `countryCodeForIataCode`. So the rule the first twenty entries
- * were written under still holds: **only codes that are certain go in**. A code
- * that is missing falls back to the two or three letters, which says less but
- * never says something false.
+ * title, through `countryCodeForIataCode`. So the rule is: **only codes that
+ * are certain go in**. A code that is missing falls back to the two or three
+ * letters, which says less but never says something false.
  *
  * What it covers is what a Lima desk sells and connects through: Peru's own
  * network, Latin America, the North American gateways, and the European ones
@@ -112,13 +111,6 @@ const IATA_LOCATION_FALLBACKS: Record<string, { city: string; countryCode: strin
   YVR: { city: "Vancouver", countryCode: "CA" },
   YYZ: { city: "Toronto", countryCode: "CA" },
 };
-
-/**
- * Every code the catalogue answers for, so a check over it reads the map
- * itself. Restated as a literal somewhere else, the two drift and the entry
- * nobody re-read is the one that reaches a quotation wrong.
- */
-export const IATA_LOCATION_CODES = Object.keys(IATA_LOCATION_FALLBACKS);
 
 export function normalizeIataCode(code?: string): string {
   return String(code ?? "").trim().toUpperCase();

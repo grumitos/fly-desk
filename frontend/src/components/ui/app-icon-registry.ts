@@ -18,13 +18,13 @@ import {
   ExternalLink,
   Funnel,
   FunnelX,
+  Gauge,
   Layers,
   ListChecks,
   Loader2,
   MapPin,
   Minus,
   Moon,
-  PanelRight,
   Pencil,
   Plane,
   PlaneTakeoff,
@@ -70,22 +70,8 @@ const BrandPlane = forwardRef<SVGSVGElement, LucideProps>(function BrandPlane(
   )
 }) as LucideIcon
 
-/**
- * The two baggage marks, drawn here rather than taken from lucide.
- *
- * Every plate in the set draws the same two — `Main`, `Movil`,
- * `MovilCompacta`, `MovilDetalle`, and the `Actual` they replace: a soft cabin
- * bag with a hoop handle, and a plain hold case with a flat one. Lucide's
- * nearest neighbours are a rucksack with shoulder straps and a wheeled trolley
- * with a telescopic handle, and those are what the row, the detail panel and
- * the baggage filter have been drawing. They are the one mark on the row that
- * an agent reads without a label, at 14px, twice per fare.
- *
- * Caps and joins are the system's round and not the plate's default: the plate
- * sets neither, so it took SVG's, which is an omission rather than a drawing
- * decision — and a second cap convention inside a closed pictogram family is a
- * cost with nothing on the other side of it.
- */
+/* A cabin bag and a hold case, read without a label at 14px; lucide's nearest
+   glyphs are a rucksack and a trolley. Round caps and joins, like the set. */
 function bagIcon(displayName: string, shapes: Array<[string, Record<string, string | number>]>): LucideIcon {
   const Icon = forwardRef<SVGSVGElement, LucideProps>(function BagIcon(
     { color = "currentColor", size = 24, strokeWidth = 2, absoluteStrokeWidth: _absoluteStrokeWidth, ...props },
@@ -125,19 +111,7 @@ const HoldBag = bagIcon("HoldBag", [
   ["path", { d: "M9 7V4h6v3" }],
 ])
 
-/*
- * Plate 7b closes the pictogram families. Each glyph has exactly one meaning, so
- * that the agent does not have to read the label to know what a control does:
- *
- *   chevron  something opens or closes in place. Never movement.
- *   arrow    direction or travel: a flight leg, an order, going back, navigating.
- *   check    confirmation: included, selected, applied.
- *   ✗ (aspa)  close or remove. Never "error" — errors carry their own colour and
- *            their own words.
- *
- * `arrowDown` is the keyboard arrow, not a sort direction; sorting is a
- * segmented control with words on it.
- */
+/* `arrowUp`/`arrowDown` are keyboard keys, not sort directions. */
 export const appIconRegistry = {
   alert: AlertTriangle,
   sort: ArrowUpDown,
@@ -147,6 +121,7 @@ export const appIconRegistry = {
   cabinBag: CabinBag,
   holdBag: HoldBag,
   calendar: Calendar,
+  capacity: Gauge,
   cityGroup: Layers,
   airport: PlaneTakeoff,
   check: Check,
@@ -157,12 +132,8 @@ export const appIconRegistry = {
   clipboard: Clipboard,
   clock: Clock,
   copy: Copy,
-  detail: PanelRight,
   externalLink: ExternalLink,
   filters: Funnel,
-  /* Plate 2g: the list emptied *by a filter*, which is a different problem from
-     a search that found nothing — and gets a different glyph and different
-     words. */
   filtersOff: FunnelX,
   flight: Plane,
   brandPlane: BrandPlane,
@@ -171,11 +142,9 @@ export const appIconRegistry = {
   location: MapPin,
   migration: ShieldCheck,
   minus: Minus,
-  /* Plate 3c: «Reintentar» after a quotation the provider did not confirm. */
   rotateCcw: RotateCcw,
   moon: Moon,
   oneWay: ArrowRight,
-  /* Plate 1d: the way back into the search from the mobile summary. */
   edit: Pencil,
   passengers: Users,
   plus: Plus,
@@ -183,8 +152,6 @@ export const appIconRegistry = {
   search: Search,
   sun: Sun,
   swap: ArrowRightLeft,
-  /* Plate 1c: stacked fields need a stacked arrow. Same job, same component —
-     only the axis follows the layout (see `<SwapIcon>`). */
   swapVertical: ArrowUpDown,
   x: X,
 } satisfies Record<string, LucideIcon>

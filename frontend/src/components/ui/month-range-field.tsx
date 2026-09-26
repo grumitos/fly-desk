@@ -1,20 +1,17 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useEffectEvent, useRef, useState } from "react"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
 import { MonthRangeCalendar, type RangePreset } from "@/components/ui/range-calendar"
 import { Sheet } from "@/components/ui/sheet"
 import { scrollCalendarMonthIntoView } from "@/lib/calendar-scroll"
-import { addMonths, isIsoMonth, monthSpan, monthYearLabel } from "@/lib/iso-date"
+import { monthYearLabel } from "@/lib/format"
+import { addMonths, isIsoMonth, monthSpan } from "@/lib/iso-date"
 import { cn } from "@/lib/utils"
 
 /*
- * Plate 6c — the Migratorio month picker.
- *
- * In Migratorio the calendar of days gives up its place to this. The frame is
- * the day calendar's frame; only the grid changes. Picking is a sweep, so the
- * month that used to be a button with a check mark is now a cell with rounded
- * ends and a flat middle, exactly like a day.
+ * Plate 6c — the Migratorio month picker: the day calendar's frame with a grid
+ * of months, picked as a sweep with rounded ends like a range of days.
  */
 
 const SPAN_PRESETS: RangePreset[] = [
@@ -47,15 +44,15 @@ export function MonthRangeField({
   mobile?: boolean
 }) {
   const [open, setOpen] = useState(false)
-  // While the agent is mid-sweep we hold the first end they clicked, so the
-  // second click can extend either forwards or backwards from it.
+  /* The first end of a sweep in progress, so the second can extend it either way. */
   const [anchorMonth, setAnchorMonth] = useState<string | null>(null)
   const [draftStartMonth, setDraftStartMonth] = useState("")
   const [draftEndMonth, setDraftEndMonth] = useState("")
-  /* Which end the agent anchored on, so movement 5 grows away from it: picking
-     a later month first and an earlier one second fills right to left. */
+  /* Movement 5 grows away from the end picked first. */
   const [sweepFrom, setSweepFrom] = useState<"start" | "end">("start")
   const mobileCalendarRef = useRef<HTMLDivElement | null>(null)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const interactedOutsideRef = useRef(false)
   const validStart = isIsoMonth(startMonth) ? startMonth : undefined
   const validEnd = isIsoMonth(endMonth) ? endMonth : undefined
   const draftStart = isIsoMonth(draftStartMonth) ? draftStartMonth : undefined
@@ -65,17 +62,17 @@ export function MonthRangeField({
   const [visibleYear, setVisibleYear] = useState(() => Number((validStart ?? minMonth).slice(0, 4)))
   const span = calendarStart && calendarEnd ? monthSpan(calendarStart, calendarEnd) : undefined
 
-  /* Opening and closing are events, so the pager and the half-finished sweep are
-     reset here rather than in an effect. */
   const handleOpenChange = (next: boolean) => {
     if (next) {
-      onTouch?.()
       if (mobile) {
         setDraftStartMonth(validStart ?? "")
         setDraftEndMonth(validEnd ?? "")
       }
       setVisibleYear(Number((validStart ?? minMonth).slice(0, 4)))
     } else {
+      /* The field counts as visited once the picker is left, so its message
+         waits until the agent has had the chance to choose. */
+      onTouch?.()
       setAnchorMonth(null)
     }
     setOpen(next)
@@ -95,8 +92,7 @@ export function MonthRangeField({
 
     const [start, end] = anchorMonth <= monthKey ? [anchorMonth, monthKey] : [monthKey, anchorMonth]
     setSweepFrom(anchorMonth === start ? "start" : "end")
-    // The ceiling is a hard product limit, not a hint: clamp rather than let a
-    // 30-month sweep through and fail at search time.
+    /* The ceiling is a product limit: clamped here rather than refused at search time. */
     const cappedEnd = monthSpan(start, end) > maxSpan ? addMonths(start, maxSpan - 1) : end
     setAnchorMonth(null)
     if (mobile) {
@@ -104,8 +100,8 @@ export function MonthRangeField({
       setDraftEndMonth(cappedEnd)
     } else {
       onChange({ startMonth: start, endMonth: cappedEnd })
-      // Confirmed on close, exactly like the range of days.
-      setOpen(false)
+      /* Confirmed on close, like the range of days. */
+      handleOpenChange(false)
     }
   }
 
@@ -122,18 +118,22 @@ export function MonthRangeField({
     }
   }
 
+  /* The phone's calendar scrolls to the year being edited when it opens. */
+  const sheetOpen = mobile && open
+  const anchorYear = (calendarStart ?? minMonth).slice(0, 4)
+  const scrollToAnchorYear = useEffectEvent(() => {
+    scrollCalendarMonthIntoView(mobileCalendarRef.current, anchorYear)
+  })
   useEffect(() => {
-    if (!mobile || !open) return
-    const anchorYear = String((calendarStart ?? minMonth).slice(0, 4))
-    const frame = window.requestAnimationFrame(() => {
-      scrollCalendarMonthIntoView(mobileCalendarRef.current, anchorYear)
-    })
+    if (!sheetOpen) return
+    const frame = window.requestAnimationFrame(() => scrollToAnchorYear())
     return () => window.cancelAnimationFrame(frame)
-  }, [calendarStart, minMonth, mobile, open])
+  }, [sheetOpen])
 
   const control = (
     <div className={cn("fd-field-control relative", invalid && "fd-field-invalid")} data-active={open}>
       <button
+        ref={triggerRef}
         type="button"
         className="absolute inset-0 rounded-xl fd-focus-ring"
         aria-label={`${label}: ${rangeLabel(validStart, validEnd)}`}
@@ -143,9 +143,8 @@ export function MonthRangeField({
       />
       <span className="fd-field-label" data-active={open || undefined}>{label}</span>
       <AppIcon name="calendar" className={open ? "text-primary" : "text-muted-foreground"} />
-      {/* The class of its own is what lets the sweep be written like the dates
-          it replaces: `.fd-field-value` alone is shared with Origen, Destino and
-          Pasajeros, which carry names and stay in sans. */}
+      {/* Its own class so the sweep is written like the dates it replaces;
+          `.fd-field-value` alone is the stations' sans. */}
       <span className={cn("fd-field-value fd-monthrange-value", !validStart && "fd-field-value-placeholder")}>
         {rangeLabel(validStart, validEnd)}
       </span>
@@ -177,7 +176,14 @@ export function MonthRangeField({
         {control}
         <Sheet
           open={open}
-          onOpenChange={handleOpenChange}
+          /* Like the date sheet: every way out keeps the months chosen; only
+             «Borrar» discards. */
+          onOpenChange={(next) => {
+            if (!next && calendarStart && calendarEnd) {
+              onChange({ startMonth: calendarStart, endMonth: calendarEnd })
+            }
+            handleOpenChange(next)
+          }}
           title="Meses"
           meta={`Migratorio · ${span ?? 0} de ${maxSpan} meses`}
           placement="bottom"
@@ -224,9 +230,25 @@ export function MonthRangeField({
       <PopoverContent
         align="start"
         sideOffset={6}
-        className="w-[min(552px,calc(100vw-2rem))] border-0 bg-transparent p-0 shadow-none"
+        bare
+        className="w-[min(552px,calc(100dvw-2rem))]"
         aria-label="Selector de meses"
-        onOpenAutoFocus={(event) => event.preventDefault()}
+        /* The focus goes to the month in the tab order, and back to the field
+           unless the agent clicked elsewhere. */
+        onOpenAutoFocus={(event) => {
+          event.preventDefault()
+          interactedOutsideRef.current = false
+          if (event.currentTarget instanceof HTMLElement) {
+            event.currentTarget.querySelector<HTMLElement>(".fd-cal-cell[tabindex='0']")?.focus()
+          }
+        }}
+        onInteractOutside={() => {
+          interactedOutsideRef.current = true
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          if (!interactedOutsideRef.current) triggerRef.current?.focus()
+        }}
       >
         {calendar}
       </PopoverContent>
@@ -259,7 +281,7 @@ function MonthRangeSummary({
         )}
       </span>
       {span !== undefined && (
-        <span className="fd-status-pill fd-mono">
+        <span className="fd-status-pill fd-tabular">
           {span} {span === 1 ? "mes" : "meses"}
         </span>
       )}
@@ -267,9 +289,8 @@ function MonthRangeSummary({
   )
 }
 
+/* 03 §2's one word for an empty date control, and this is one (06 §4). */
 function rangeLabel(start?: string, end?: string): string {
-  // 03 §2 gives the empty date control one word, «Elegir». The month picker is
-  // the same control with a different grid (06 §4), so it uses the same word.
   if (!start) return "Elegir"
   if (!end || end === start) return monthYearLabel(start)
   return `${monthYearLabel(start)} – ${monthYearLabel(end)}`

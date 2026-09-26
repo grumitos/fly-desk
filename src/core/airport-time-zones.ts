@@ -1,4 +1,4 @@
-import { IATA_LOCATION_CODES, normalizeIataCode } from "./location-display";
+import { normalizeIataCode } from "./location-display";
 
 /*
  * The clock each IATA code keeps.
@@ -15,10 +15,9 @@ import { IATA_LOCATION_CODES, normalizeIataCode } from "./location-display";
  * this network moves: Santiago is UTC-4 in July and UTC-3 in September, which
  * is exactly when a Lima desk sells the connection through it.
  *
- * The list is the location catalogue's, code for code, and the suite checks
- * that it stays that way. A code with a name but no clock would read as an
- * airport whose durations quietly fall back to the wrong arithmetic, and a
- * clock with no name is a code this desk does not sell.
+ * The list is the location catalogue's, code for code. A code with a name but
+ * no clock would read as an airport whose durations quietly fall back to the
+ * wrong arithmetic, and a clock with no name is a code this desk does not sell.
  */
 const IATA_TIME_ZONES: Record<string, string> = {
   AEP: "America/Argentina/Buenos_Aires",
@@ -112,13 +111,6 @@ const IATA_TIME_ZONES: Record<string, string> = {
   YVR: "America/Vancouver",
   YYZ: "America/Toronto",
 };
-
-/** Every code the clock catalogue answers for, so a check reads the map. */
-export const IATA_TIME_ZONE_CODES = Object.keys(IATA_TIME_ZONES);
-
-/** The two catalogues are one list read twice; the suite holds them to it. */
-export const IATA_LOCATION_CODES_WITHOUT_TIME_ZONE = IATA_LOCATION_CODES
-  .filter((code) => !IATA_TIME_ZONES[code]);
 
 export function timeZoneForIataCode(code?: string): string | undefined {
   return IATA_TIME_ZONES[normalizeIataCode(code)];

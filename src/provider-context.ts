@@ -1,22 +1,21 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { envFlag } from "./env";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CostamarProviderContext,
   CostamarProviderConfigInput,
-  ProviderConfigInput,
   ProviderContext,
   ProviderId,
 } from "./core/types";
 
-export const DEFAULT_COSTAMAR_API_BASE_URL = "https://air-search-service-zneith.zdev.tech/v2";
-export const DEFAULT_COSTAMAR_BRAND_BASE_URL = "https://flights.zdev.tech/vuelos/pro";
-export const DEFAULT_COSTAMAR_ENGINE_BASE_URL = "https://api-zneith.zdev.tech/api-engine";
-export const DEFAULT_COSTAMAR_MARKUP_BASE_URL = "https://commons-service-b-zneith.zdev.tech/markup-service";
-export const DEFAULT_COSTAMAR_TERMINAL_ID = "0721808110";
+const DEFAULT_COSTAMAR_API_BASE_URL = "https://air-search-service-zneith.zdev.tech/v2";
+const DEFAULT_COSTAMAR_BRAND_BASE_URL = "https://flights.zdev.tech/vuelos/pro";
+const DEFAULT_COSTAMAR_ENGINE_BASE_URL = "https://api-zneith.zdev.tech/api-engine";
+const DEFAULT_COSTAMAR_TERMINAL_ID = "0721808110";
 const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 const COSTAMAR_SESSION_CACHE_TTL_MS = 30000;
-export const COSTAMAR_TOKEN_REFRESH_WINDOW_MS = 2 * 60 * 1000;
+const COSTAMAR_TOKEN_REFRESH_WINDOW_MS = 2 * 60 * 1000;
 const COSTAMAR_BRANDED_URL_REGEX =
   /https:\/\/(?:booking\.clickandbook\.com\/vuelos|flights\.zdev\.tech\/vuelos\/pro)\/b\/[^\s\x00?]+\?[^\s\x00]*/gi;
 const COSTAMAR_BRANDED_URL_ENCODED_REGEX =
@@ -30,7 +29,6 @@ const COSTAMAR_SESSION_FILE_REGEX = /^(?:(?:Session|Tabs)_\d+|(?:Current|Last) (
 const COSTAMAR_API_HOSTS = new Set(["air-search-service-zneith.zdev.tech", "test-api-zneith.zdev.tech"]);
 const COSTAMAR_BRAND_HOSTS = new Set(["flights.zdev.tech"]);
 const COSTAMAR_ENGINE_HOSTS = new Set(["api-zneith.zdev.tech"]);
-const COSTAMAR_MARKUP_HOSTS = new Set(["commons-service-b-zneith.zdev.tech"]);
 
 interface CostamarSessionCandidate {
   terminalId: string;
@@ -40,7 +38,7 @@ interface CostamarSessionCandidate {
   source: string;
 }
 
-export type CostamarTokenIssue =
+type CostamarTokenIssue =
   | "missing"
   | "terminal-mismatch"
   | "expired"
@@ -48,7 +46,7 @@ export type CostamarTokenIssue =
   | "opaque"
   | "usable";
 
-export interface CostamarTokenInspection {
+interface CostamarTokenInspection {
   token: string;
   hasToken: boolean;
   opaque: boolean;
@@ -66,15 +64,9 @@ let cachedCostamarSessions:
   | { readAtMs: number; candidates: CostamarSessionCandidate[] }
   | undefined;
 const runtimeCostamarSessionCandidates = new Map<string, CostamarSessionCandidate>();
-const pendingCostamarProviderContextResolutions = new Map<string, Promise<CostamarProviderContext>>();
-let costamarChromeSessionScanCountForTests = 0;
 
 function costamarCdpTabScanEnabled(): boolean {
-  return String(
-    process.env.CBPLUS_CDP_TAB_SCAN_ENABLED?.trim()
-      ?? process.env.COSTAMAR_CDP_TAB_SCAN_ENABLED
-      ?? "0",
-  ).trim() !== "0";
+  return envFlag(["CBPLUS_CDP_TAB_SCAN_ENABLED", "COSTAMAR_CDP_TAB_SCAN_ENABLED"], false);
 }
 
 function stringOrFallback(value: string | undefined, fallback: string): string {
@@ -166,7 +158,7 @@ function decodeCostamarTokenTerminalId(token: string): string | undefined {
   return terminalId?.trim() || undefined;
 }
 
-export function sanitizeCostamarToken(token: string | undefined): string {
+function sanitizeCostamarToken(token: string | undefined): string {
   const normalized = token?.trim() ?? "";
   if (!normalized || normalized.length > COSTAMAR_TOKEN_MAX_LENGTH) {
     return "";
@@ -196,7 +188,7 @@ export function sanitizeCostamarToken(token: string | undefined): string {
   return normalized.match(COSTAMAR_TOKEN_SAFE_PREFIX_REGEX)?.[0] ?? "";
 }
 
-export function costamarTokenMatchesTerminal(
+function costamarTokenMatchesTerminal(
   token: string | undefined,
   terminalId: string | undefined,
 ): boolean {
@@ -444,7 +436,7 @@ function readChromeProfileCandidates(userDataDir: string, includeConfiguredOnly 
   return candidates;
 }
 
-export function costamarTokenNearExpiry(
+function costamarTokenNearExpiry(
   token: string | undefined,
   terminalId: string | undefined,
   nowMs = Date.now(),
@@ -852,7 +844,6 @@ function readCostamarSessionCandidateFromChrome(
     );
   }
 
-  costamarChromeSessionScanCountForTests += 1;
   const configuredUserDataDirs = readChromeUserDataDirCandidates(true);
   const allUserDataDirs = readChromeUserDataDirCandidates();
   const configuredProfile = resolveConfiguredChromeProfile();
@@ -926,30 +917,62 @@ function maybeRefreshCostamarSessionCandidate(
   return readCostamarSessionCandidateFromChrome(terminalId, { bypassCache: true }) ?? candidate;
 }
 
-export function resetCostamarSessionCacheForTests(): void {
-  cachedCostamarSessions = undefined;
-  runtimeCostamarSessionCandidates.clear();
-  pendingCostamarProviderContextResolutions.clear();
-  costamarChromeSessionScanCountForTests = 0;
-}
-
-export function getCostamarChromeSessionScanCountForTests(): number {
-  return costamarChromeSessionScanCountForTests;
-}
-
 export function resolveProviderId(providerId?: ProviderId): ProviderId {
   return providerId === "costamar" ? "costamar" : "agil-local";
+}
+
+/*
+ * The branded token lives an hour and is renewed outside the application. When
+ * `CBPLUS_TOKEN_FILE` names a file, each process re-reads it whenever its
+ * modification time or size changes, so a renewal reaches the search runner, its
+ * workers and the redirect service without restarting them.
+ */
+const TOKEN_FILE_STAT_INTERVAL_MS = 1_000;
+let tokenFileCache: { path: string; checkedAtMs: number; signature: string; token: string } | undefined;
+
+function readCostamarTokenFile(path: string, nowMs: number): string {
+  if (tokenFileCache?.path === path && nowMs - tokenFileCache.checkedAtMs < TOKEN_FILE_STAT_INTERVAL_MS) {
+    return tokenFileCache.token;
+  }
+
+  try {
+    const stats = statSync(path);
+    const signature = `${stats.mtimeMs}:${stats.size}`;
+    const token = tokenFileCache?.path === path && tokenFileCache.signature === signature
+      ? tokenFileCache.token
+      : readFileSync(path, "utf8").trim();
+    tokenFileCache = { path, checkedAtMs: nowMs, signature, token };
+  } catch {
+    tokenFileCache = { path, checkedAtMs: nowMs, signature: "", token: "" };
+  }
+  return tokenFileCache.token;
+}
+
+/*
+ * The platform installs each renewal in the file and in `CBPLUS_TOKEN`: a
+ * running process sees only the file change, and a worker inherits the
+ * `CBPLUS_TOKEN` its runner started with. A platform release that predates the
+ * file renews only `CBPLUS_TOKEN`, restarting the units, and leaves the file
+ * stale. Either way the current token is the one that expires last; a tie
+ * keeps the file.
+ */
+function readConfiguredCostamarToken(nowMs = Date.now()): string | undefined {
+  const path = process.env.CBPLUS_TOKEN_FILE?.trim();
+  const fileToken = path ? readCostamarTokenFile(path, nowMs) : "";
+  const environmentToken = process.env.CBPLUS_TOKEN?.trim() || process.env.COSTAMAR_TOKEN?.trim() || "";
+  if (!fileToken || !environmentToken) {
+    return fileToken || environmentToken || undefined;
+  }
+
+  return decodeJwtTimes(environmentToken).expMs > decodeJwtTimes(fileToken).expMs ? environmentToken : fileToken;
 }
 
 export function normalizeCostamarProviderContext(
   input?: CostamarProviderConfigInput,
 ): CostamarProviderContext {
-  const normalizedToken = sanitizeCostamarToken(
-    input?.token
-      ?? process.env.CBPLUS_TOKEN
-      ?? process.env.COSTAMAR_TOKEN
-      ?? "",
-  );
+  /* An empty token is no token: a context without one, such as a search job's
+     or a warm-up seed, reads the configured token as it is now. */
+  const normalizedToken = sanitizeCostamarToken(input?.token?.trim() || readConfiguredCostamarToken() || "");
   return {
     apiBaseUrl: normalizeAllowedHttpsUrl(
       process.env.CBPLUS_SEARCH_API_BASE_URL,
@@ -969,12 +992,6 @@ export function normalizeCostamarProviderContext(
       COSTAMAR_ENGINE_HOSTS,
       "CBPLUS_ENGINE_API_BASE_URL",
     ),
-    markupBaseUrl: normalizeAllowedHttpsUrl(
-      process.env.CBPLUS_MARKUP_API_BASE_URL,
-      DEFAULT_COSTAMAR_MARKUP_BASE_URL,
-      COSTAMAR_MARKUP_HOSTS,
-      "CBPLUS_MARKUP_API_BASE_URL",
-    ),
     terminalId: stringOrFallback(
       input?.terminalId ?? process.env.CBPLUS_TERMINAL_ID ?? process.env.COSTAMAR_TERMINAL_ID,
       DEFAULT_COSTAMAR_TERMINAL_ID,
@@ -987,7 +1004,7 @@ export function normalizeCostamarProviderContext(
   };
 }
 
-export function resolveCostamarProviderContext(
+function resolveCostamarProviderContext(
   input?: CostamarProviderConfigInput,
 ): CostamarProviderContext {
   const normalized = normalizeCostamarProviderContext(input);
@@ -1016,33 +1033,6 @@ export function resolveCostamarProviderContext(
       ? sessionCandidate?.token || compatibleToken
       : compatibleToken || sessionCandidate?.token,
   });
-}
-
-function resolveCostamarProviderContextDedupKey(
-  input?: CostamarProviderConfigInput,
-): string {
-  const normalized = normalizeCostamarProviderContext(input);
-  return `${normalized.terminalId}::${normalized.lang}::${normalized.token}`;
-}
-
-export async function resolveCostamarProviderContextInFlight(
-  input?: CostamarProviderConfigInput,
-): Promise<CostamarProviderContext> {
-  const key = resolveCostamarProviderContextDedupKey(input);
-  const pending = pendingCostamarProviderContextResolutions.get(key);
-  if (pending) {
-    return pending;
-  }
-
-  const resolution = Promise.resolve()
-    .then(() => resolveCostamarProviderContext(input))
-    .finally(() => {
-      if (pendingCostamarProviderContextResolutions.get(key) === resolution) {
-        pendingCostamarProviderContextResolutions.delete(key);
-      }
-    });
-  pendingCostamarProviderContextResolutions.set(key, resolution);
-  return resolution;
 }
 
 export function resolveLatestCostamarProviderContext(
@@ -1076,81 +1066,6 @@ export function resolveLatestCostamarProviderContext(
   });
 }
 
-export function buildProviderContext(
-  providerId: ProviderId,
-  providerConfig?: ProviderConfigInput,
-): ProviderContext | undefined {
-  if (providerId !== "costamar") {
-    return undefined;
-  }
-
-  return {
-    costamar: resolveCostamarProviderContext(providerConfig?.costamar),
-  };
-}
-
-export async function buildProviderContextAsync(
-  providerId: ProviderId,
-  providerConfig?: ProviderConfigInput,
-): Promise<ProviderContext | undefined> {
-  if (providerId !== "costamar") {
-    return undefined;
-  }
-
-  return {
-    costamar: await resolveCostamarProviderContextInFlight(providerConfig?.costamar),
-  };
-}
-
 export function getCostamarProviderContext(providerContext?: ProviderContext): CostamarProviderContext {
   return resolveCostamarProviderContext(providerContext?.costamar);
-}
-
-export interface CostamarTokenStatus {
-  terminalId: string;
-  hasToken: boolean;
-  tokenUsable: boolean;
-  tokenExpiresAt?: string;
-  minutesRemaining?: number;
-}
-
-export function getCostamarTokenStatus(): CostamarTokenStatus {
-  const context = resolveLatestCostamarProviderContext();
-  const usableToken = resolveUsableCostamarBrandedToken(context.token, context.terminalId);
-  const times = usableToken ? decodeJwtTimes(usableToken) : { iatMs: 0, expMs: 0 };
-
-  return {
-    terminalId: context.terminalId,
-    hasToken: Boolean(context.token),
-    tokenUsable: Boolean(usableToken),
-    tokenExpiresAt: times.expMs > 0 ? new Date(times.expMs).toISOString() : undefined,
-    minutesRemaining: times.expMs > 0 ? Math.max(0, Math.round((times.expMs - Date.now()) / 60000)) : undefined,
-  };
-}
-
-export async function verifyCostamarTokenLive(
-  context?: CostamarProviderContext,
-): Promise<{ valid: boolean; reason?: string }> {
-  const ctx = context ?? resolveLatestCostamarProviderContext();
-  const usableToken = resolveUsableCostamarBrandedToken(ctx.token, ctx.terminalId);
-  if (!usableToken) {
-    return { valid: false, reason: "Token expirado o incompatible" };
-  }
-
-  try {
-    const engineBaseUrl = (ctx.engineBaseUrl ?? DEFAULT_COSTAMAR_ENGINE_BASE_URL).replace(/\/+$/, "");
-    const response = await fetch(
-      `${engineBaseUrl}/engines/${encodeURIComponent(ctx.terminalId)}`,
-      {
-        headers: { accept: "application/json" },
-        signal: AbortSignal.timeout(5000),
-      },
-    );
-    if (response.ok) {
-      return { valid: true };
-    }
-    return { valid: false, reason: `API respondió ${response.status}` };
-  } catch (error) {
-    return { valid: false, reason: error instanceof Error ? error.message : "Error desconocido" };
-  }
 }

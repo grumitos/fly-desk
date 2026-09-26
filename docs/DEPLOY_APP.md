@@ -1,46 +1,48 @@
 # Fly Desk Application Deployment
 
-This repository publishes only the Fly Desk product. Caddy, systemd, users, firewall, the release engine, and its wrappers belong to `grumitos/vps-platform`.
+This repository publishes only the Fly Desk product. Caddy, systemd, users,
+firewall, the release engine and its wrappers belong to `grumitos/vps-platform`.
 
 ## Production Contract
 
 - Canonical repository: `grumitos/fly-desk`.
-- Deployable branch: `main`; the workflow requires an exact 40-character SHA reachable from `origin/main`.
+- Deployable branch: `main`; the workflow requires an exact 40-character SHA
+  reachable from `origin/main`.
 - Atomic current path: `/opt/fly-desk`.
 - Immutable releases: `/opt/apps/fly-desk/releases/<sha>`.
-- Persistent state: `/var/lib/fly-desk`; it is never part of the artifact or rollback.
+- Persistent state: `/var/lib/fly-desk`; never part of an artifact or a
+  rollback.
 - Web: `fly-desk.service`, `127.0.0.1:8100`.
-- Search: `fly-desk-search.service`, `127.0.0.1:8101`.
+- Search runner: `fly-desk-search.service`, `127.0.0.1:8101`.
 - Redirects: `fly-desk-redirect.service`, `127.0.0.1:8102`.
-- Chrome/CDP: `fly-desk-chrome.service`, `127.0.0.1:9222`; a normal deployment does not restart it.
+- Chrome/CDP: `fly-desk-chrome.service`, `127.0.0.1:9222`; a deployment does
+  not restart it.
 - Public endpoint: `https://fly-desk.pages.dev/`.
 
 ## Local Gate
 
-```bash
-bun install --frozen-lockfile
-bun run typecheck
-bun run lint
-bun run build
-bun run test
-```
+Run the gates in [`AGENTS.md`](../AGENTS.md), "Verification", before a change
+reaches `main`; the pull request's required checks run the same ones.
 
 ## Deployment Through GitHub Actions
 
-The `.github/workflows/deploy-vps.yml` workflow has two modes:
+`.github/workflows/deploy-vps.yml` has two modes:
 
-- `deploy`: verifies that the exact SHA belongs to `main`, runs the gate,
-  creates a deterministic tar archive with a single `app/` root, calculates
-  its SHA-256 digest, and stores it as a short-lived GitHub artifact. A fresh
-  production-environment job downloads and verifies that digest before it
-  configures the SSH identity, streams the archive through the forced `upload`
-  command, activates it with `deploy`, and confirms it with `verify`.
-- `rollback`: activates an existing immutable release by SHA through the
-  forced `rollback` command and confirms it with `verify`.
+- `deploy`: verifies that the exact SHA belongs to `main`, installs and builds
+  it, packs a deterministic tar archive with a single `app/` root
+  (`scripts/pack-release.sh`), computes its SHA-256 digest, smokes the archive
+  (`scripts/release-smoke.ts`, below) and stores it as a one-day artifact.
+  The revision's typecheck, lint and end-to-end suite already passed as the
+  pull request's required checks, so they are not run again here. A separate
+  production-environment job downloads the artifact, verifies the digest,
+  configures the pinned SSH identity, streams the archive through the forced
+  `upload` command, activates it with `deploy` and confirms it with `verify`.
+- `rollback`: activates an already installed release by SHA through the forced
+  `rollback` command and confirms it with `verify`.
 
-The workflow does not install units, modify Caddy, transmit a deployment
-script over SSH, write the canonical incoming spool directly, or invoke
-`sudo`. Its complete remote command surface is:
+The workflow never installs units, edits Caddy, sends a script over SSH, writes
+the canonical incoming spool or calls `sudo`. Its entire remote command
+surface is:
 
 ```text
 upload <sha40> <sha256>
@@ -49,46 +51,75 @@ verify <sha40>
 rollback <sha40>
 ```
 
-The engine takes a lock shared with maintenance, validates the archive digest and structure, prepares the candidate as the runtime user, switches the symlink, restarts web/search/redirect, runs health checks, and restores the previous current release if activation fails.
+The release engine takes a lock shared with maintenance, validates the archive
+digest and structure, prepares the candidate as the build user
+`fly-desk-build`, switches the symlink, restarts web, search and redirect,
+checks their health, and restores the previous release if activation fails.
 
-Required secrets:
+Required secrets: `VPS_HOST`, `VPS_PORT` (optional, defaults to `22`),
+`VPS_USER` (the Fly Desk CI identity), `VPS_SSH_KEY_B64` and
+`VPS_SSH_KNOWN_HOSTS_B64` (obtained through a trusted channel). The job uses
+`BatchMode`, `IdentitiesOnly` and `StrictHostKeyChecking`, never
+`ssh-keyscan`. The CI identity is restricted to the forced commands above;
+build and test code runs only in the secretless build job, and the
+credentialed job does not check out or execute repository code.
 
-- `VPS_HOST`
-- `VPS_PORT`, optional; defaults to `22`
-- `VPS_USER`, the CI identity dedicated to Fly Desk
-- `VPS_SSH_KEY_B64`
-- `VPS_SSH_KNOWN_HOSTS_B64`, obtained through a trusted channel
-
-The job uses `BatchMode`, `IdentitiesOnly`, and `StrictHostKeyChecking`; it does
-not allow `ssh-keyscan`. The CI identity is restricted to those forced
-commands, receives no interactive shell, and cannot submit arbitrary commands.
-The dispatcher alone invokes the fixed wrapper under the platform policy. The
-forced upload command owns placement in the canonical incoming spool.
-Repository build and test code runs only in the secretless build job. The
-credentialed delivery job does not check out or execute repository code.
-
-The release source comes from `git archive` at the requested main SHA. The
-workflow adds only the frontend output built from that checkout and the exact
-`REVISION`, then normalizes archive ordering, timestamps, ownership, and gzip
-metadata. Unrelated generated or untracked working-tree files cannot enter the
+The release source is `git archive` of the requested SHA plus the frontend
+built from that checkout and a `REVISION` file; ordering, timestamps,
+ownership and gzip metadata are normalized, so untracked files cannot enter a
 release.
+
+The release smoke unpacks the archive into an empty directory, runs its
+prepare hook with only the build user's environment, and starts web, search
+and redirect from it as their units do, with prewarm off so no provider is
+called. It requires each unit's `/api/health`, a sign-in, the signed-in shell
+and one of its built assets. The environment carries a `SEARCH_TODAY_OVERRIDE`
+that production must ignore and empty numeric settings that must keep their
+defaults, and the smoke checks both through the shell's runtime settings and
+the session cookie. It also requires a released `src/**/*.ts` naming
+`CBPLUS_TOKEN_FILE`, which is how the platform tells that a release re-reads
+the token file, and an import of an uncarried package to fail instead of
+downloading it. The Core quality gate runs the same smoke on every pull
+request.
 
 ## Release Preparation
 
-`deploy/prepare-release.sh` runs `bun install --frozen-lockfile` with the system Bun installation and requires the compiled frontend to be present. The engine runs it as the runtime user, never as root.
+A release installs no packages. The runtime imports only Bun and Node
+built-ins, the frontend arrives built in `frontend/dist`, and `bunfig.toml`
+disables Bun's install-on-import (`[install] auto = "disable"`), so importing a
+package the release does not carry fails instead of fetching it from the
+registry. Playwright, the one package the source names, is a development
+dependency: the end-to-end suite and the Click and Book Plus browser fallback
+on a workstation use it.
 
-Real application variables live in `/etc/fly-desk.env`. `.env.example` documents names and defaults, not values. SQLite databases, caches, sessions, the Chrome profile, and mutable artifacts must remain under `/var/lib/fly-desk`.
+`deploy/prepare-release.sh` runs as `fly-desk-build` with the system Bun, in an
+environment that holds only `HOME`, `PATH`, `RELEASE_DIR` and `REVISION`. It
+refuses a `package.json` that declares runtime `dependencies`, and
+requires `frontend/dist/index.html`.
 
-During a host migration, do not copy the Chrome profile or session SQLite database to preserve Click and Book Plus. Regenerate its token from credentials/TOTP and use CDP only as a fallback, as described in [`CBPLUS_SESSION_RECOVERY.md`](./CBPLUS_SESSION_RECOVERY.md). The Agil session, which uses a different model, is recovered through [`AGIL_SESSION_RECOVERY.md`](./AGIL_SESSION_RECOVERY.md).
+Real configuration lives in `/etc/fly-desk.env` (`.env.example` documents the
+names and defaults, never values). The Click and Book Plus token file
+`/etc/fly-desk.cbplus-token` is written by the platform; see
+[`CBPLUS_SESSION_RECOVERY.md`](./CBPLUS_SESSION_RECOVERY.md). SQLite
+databases, caches, the Agil identity and the Chrome profile stay under
+`/var/lib/fly-desk`.
+
+On a new host, never copy the Chrome profile, the session database or a token.
+Click and Book Plus comes back with the next platform renewal; Agilsmart is
+recovered through [`AGIL_SESSION_RECOVERY.md`](./AGIL_SESSION_RECOVERY.md).
 
 ## Verification and Rollback
 
-After deployment, the wrapper requires local health on ports `8100`, `8101`, and `8102`. The workflow accepts a public `200` response or the expected regional `403` from runners outside Peru.
+After activation the engine requires local health on `8100`, `8101` and
+`8102`. The workflow's public smoke accepts `200` or the expected regional
+`403` from runners outside Peru.
 
-For changes to search, cancellation, redirects, providers, or sessions/cache, run `Fly Desk Production Smoke` in `vps-platform` afterward and wait for its result.
+For changes that touch search, cancellation, redirects, providers, sessions or
+caches, run `Fly Desk Production Smoke` in `vps-platform` afterwards and wait
+for its result.
 
-To roll back, open `Deploy VPS`, choose `mode=rollback`, and provide the exact
-SHA of an existing release. If Actions is unavailable, stop and restore the
-dedicated forced-command CI path through the platform recovery procedure.
-Neither `ops` nor `deploy` may invoke an application release wrapper manually;
-do not copy releases or change `/opt/fly-desk` directly.
+To roll back, run `Deploy VPS` with `mode=rollback` and the exact SHA of an
+installed release. If Actions is unavailable, restore the forced-command CI
+path through the platform recovery procedure. Neither `ops` nor `deploy` may
+invoke an application release wrapper by hand, copy releases or move
+`/opt/fly-desk`.

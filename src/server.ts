@@ -3,6 +3,9 @@ import * as path from "node:path";
 import type { Server as BunServer } from "bun";
 import { ensureAirlineMark } from "./airline-mark-store";
 import { routeRequest } from "./http-router";
+import { requestWithServerTrustHeaders, routeRedirectRequest } from "./redirect-service";
+import { SEARCH_SERVICE_PROXY_HEADER } from "./search-service-client";
+import { hasAcceptedApiAccessToken } from "./service-auth";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import { getPublicRuntimeConfig } from "./search-date-policy";
 import {
@@ -99,7 +102,7 @@ function responseHeaders(contentType: string, cacheControl: string): Record<stri
   return {
     "Content-Type": contentType,
     "Cache-Control": cacheControl,
-    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
@@ -197,6 +200,8 @@ async function readBody(request: Request): Promise<ArrayBuffer | undefined> {
 
   const declaredLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BODY_BYTES) {
+    /* An unread upload keeps its connection open until the idle timeout. */
+    await request.body?.cancel().catch(() => undefined);
     throw new RequestBodyTooLargeError(MAX_REQUEST_BODY_BYTES);
   }
 
@@ -326,6 +331,13 @@ async function proxyToRouter(request: Request, server: BunServer<undefined>, url
     headers.append(key, value);
   });
 
+  /* The web unit marks what it delegates to the search runner, so the runner
+     does not count the search a second time. Only a request that carries a
+     service token may keep that mark. */
+  if (request.headers.get(SEARCH_SERVICE_PROXY_HEADER) === "1" && hasAcceptedApiAccessToken(request.headers)) {
+    headers.set(SEARCH_SERVICE_PROXY_HEADER, "1");
+  }
+
   const remoteAddress = server.requestIP(request)?.address;
   const clientAddress = resolveClientAddress(request, remoteAddress);
   headers.set(
@@ -342,6 +354,8 @@ async function proxyToRouter(request: Request, server: BunServer<undefined>, url
     headers,
     body,
     duplex: body ? "half" : undefined,
+    /* Aborts when the client goes away, so a long poll it abandoned ends. */
+    signal: request.signal,
   };
 
   let webResponse: Response;
@@ -374,7 +388,7 @@ async function routeServerRequest(request: Request, server: BunServer<undefined>
     }
 
     const error = url.searchParams.get("error")
-      ? "Password invalido."
+      ? "Contraseña incorrecta."
       : undefined;
     return new Response(renderLoginPage(error, resolveWebTheme(request), next), {
       status: 200,
@@ -420,10 +434,16 @@ async function routeServerRequest(request: Request, server: BunServer<undefined>
     return new Response(null, { status: 204 });
   }
 
+  /* Production routes `/r/*` to the redirect service; a single-process run
+     answers it with the same resolver. */
+  if (pathname.startsWith("/r/")) {
+    return routeRedirectRequest(requestWithServerTrustHeaders(new Request(url, request), server));
+  }
+
   return proxyToRouter(request, server, url);
 }
 
-export async function handleRequest(request: Request, server: BunServer<undefined>): Promise<Response> {
+async function handleRequest(request: Request, server: BunServer<undefined>): Promise<Response> {
   const requestStart = startPerfTimer();
   let pathname = "<malformed>";
   let status = 500;
@@ -440,7 +460,7 @@ export async function handleRequest(request: Request, server: BunServer<undefine
       status = 413;
       return Response.json(
         { error: error.message },
-        { status, headers: noStoreHeaders("application/json; charset=utf-8") },
+        { status, headers: { ...noStoreHeaders("application/json; charset=utf-8"), Connection: "close" } },
       );
     }
 
@@ -471,7 +491,7 @@ export async function handleRequest(request: Request, server: BunServer<undefine
   }
 }
 
-export function resolveServerIdleTimeoutSeconds(
+function resolveServerIdleTimeoutSeconds(
   input = process.env.FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS,
 ): number {
   const normalized = String(input ?? "").trim();

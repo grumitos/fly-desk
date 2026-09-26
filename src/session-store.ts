@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
+import { envNumber } from "./env";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import {
   CanonicalOffer,
@@ -20,30 +21,12 @@ const COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
 /* Past this, the boot is worth a line in the journal on its own. */
 const BOOT_TIMING_REPORT_MS = 1_000;
 /*
- * How much of the persisted cache is parsed back into memory before the process
- * can serve anything, and why it is not 128 MB any more.
- *
- * This budget is paid on the boot path: `loadPersisted()` runs in the store's
- * constructor, the runtime is built before `createServer()`, and the port opens
- * only once both are done. On 2026-08-19 the production search runner took **84
- * seconds** to reach `Fly Desk running at http://127.0.0.1:8101` with 55 jobs
- * and 1.78 GB on disk, burning 65s of CPU and peaking at 912 MB with 256 MB of
- * swap on a 3.8 GB box. The release engine's health window is shorter than
- * that, so the deployment failed activation, rolled back — and the rollback
- * restarted the previous release into the same 84 seconds, which is what
- * «previous release did not recover cleanly» meant.
- *
- * Measured on a 382 MB store of the same shape, boot falls with the budget:
- * 2.56s at 128 MB, 1.85s at 32, 1.24s at 8. The rest is the fixed floor (prune,
- * the metadata queries, the first persist), and the part that scales with this
- * number is `JSON.parse` and the memory it holds — the exact cost that turns
- * into swap on the box.
- *
- * 16 MB, then, and it is only a *pre-warm*: what is not restored stays on disk
- * and is read on demand, transparently, which is what the disk-only tier has
- * always done for everything past the budget. What a running desk keeps in
- * memory is a different number with its own env var
- * (`SEARCH_COMPLETED_SESSION_RESIDENT_BUDGET_BYTES`), unchanged at 128 MB.
+ * How much of the persisted cache is parsed back into memory at boot. It is
+ * paid before the port opens (`loadPersisted()` runs in the constructor, and
+ * the runtime is built before `createServer()`), so it has to fit the release
+ * engine's health window. It is only a pre-warm: what is not restored stays on
+ * disk and is read on demand. What a running desk keeps in memory is a separate
+ * budget, `SEARCH_COMPLETED_SESSION_RESIDENT_BUDGET_BYTES`.
  */
 const PERSISTED_SEARCH_CACHE_RESTORE_DEFAULT_BUDGET_BYTES = 16 * 1024 * 1024;
 
@@ -58,11 +41,19 @@ function persistedRestoreBudgetBytes(configured?: number): number {
     ? parsed
     : PERSISTED_SEARCH_CACHE_RESTORE_DEFAULT_BUDGET_BYTES;
 }
-const COMPLETED_SEARCH_SESSION_RESIDENT_DEFAULT_BUDGET_BYTES = 128 * 1024 * 1024;
-export const COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS = 5_000;
-/* The write debounce. Named so a test can advance exactly one debounce rather
-   than sleep for "long enough". */
-export const SESSION_STORE_PERSIST_DEBOUNCE_MS = 180;
+/*
+ * The completed jobs a running desk keeps in memory, counted in the bytes they
+ * are persisted as. In memory a job costs about four times that: a month of a
+ * migratory sweep persists as 32 MiB and holds 119 MiB of the runner's heap.
+ * So this keeps about one month of fares resident, and a sweep's earlier
+ * months are read from disk when asked for, instead of four of them staying
+ * in a runner whose memory throttles at 900 MiB.
+ */
+const COMPLETED_SEARCH_SESSION_RESIDENT_DEFAULT_BUDGET_BYTES = 32 * 1024 * 1024;
+const COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS = 5_000;
+/* An eviction this large is worth a collection of its own. */
+const EVICTION_COLLECT_MIN_BYTES = 8 * 1024 * 1024;
+const SESSION_STORE_PERSIST_DEBOUNCE_MS = 180;
 /*
  * Durability policy, half two: this is the age a finished job may reach before
  * a sweep takes it, and nothing else. It is not a switch for whether the desk
@@ -79,10 +70,8 @@ export const SESSION_STORE_PERSIST_DEBOUNCE_MS = 180;
  * not by asking this number for a guarantee it does not make.
  */
 export const COMPLETED_SEARCH_SESSION_TTL_MS = (() => {
-  const raw = Number(process.env.SEARCH_COMPLETED_SESSION_TTL_MS ?? COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS);
-  return Number.isFinite(raw) && raw >= 0
-    ? raw
-    : COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS;
+  const configured = envNumber("SEARCH_COMPLETED_SESSION_TTL_MS", COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS);
+  return configured >= 0 ? configured : COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS;
 })();
 
 function withCurrentSearchCacheVersion(searchMeta: SearchMeta): SearchMeta {
@@ -99,28 +88,38 @@ function hasCurrentSearchCacheVersion(searchMeta: SearchMeta): boolean {
 type SearchJobStatus = "running" | "completed" | "failed" | "cancelled";
 
 /*
- * The statuses the sweep removes, written out rather than expressed as
- * «anything but completed».
- *
- * `status <> 'completed'` cannot seek an index, so SQLite answered it by
- * reading the table — and this table's rows carry the payloads, which is how a
- * prune that deletes nothing came to cost 16.6 seconds of a 22-second boot on
- * a 1.78 GB store. `IN` over the three seeks `idx_search_jobs_lookup`, which
- * leads with `status`. The list is exhaustive against the union above; a status
- * added there and forgotten here is still swept by age, the branch beside it.
+ * The statuses the sweep removes, written out because `status <> 'completed'`
+ * cannot seek an index, and these rows carry the payloads; `IN` over the three
+ * seeks the indexes that lead with `status`. The list is exhaustive against
+ * the union above; a status added there and missed here is still swept by age.
  */
 const SWEEPABLE_JOB_STATUSES: readonly SearchJobStatus[] = ["running", "failed", "cancelled"];
 const SWEEPABLE_JOB_STATUS_LIST = SWEEPABLE_JOB_STATUSES.map((status) => `'${status}'`).join(", ");
 
-/**
- * What the sweep runs, in order, with the cutoff bound to `?1`.
- *
- * Exported so a test can hold them against `EXPLAIN QUERY PLAN`: every one of
- * them must seek an index. The single `OR` they replaced could not, so SQLite
- * read the table — and these rows carry the payloads.
- */
 /** How long after the port opens the covering indexes are built. */
 const RESTORE_INDEX_BUILD_DELAY_MS = 10_000;
+
+/* `PRAGMA auto_vacuum`: the file hands the pages a sweep frees back to the
+   filesystem only in this mode, and only when `incremental_vacuum` asks. */
+const AUTO_VACUUM_INCREMENTAL = 2;
+
+/*
+ * The largest cache the boot VACUUM rewrites. A VACUUM copies every live page
+ * before the port opens, and the release engine gives a unit that refuses
+ * connections about a minute (30 probes, 2 s apart) before it rolls back. On a
+ * workstation 200 MiB live took 3.4–9.4 s, so this bound stays inside it.
+ */
+const BOOT_VACUUM_MAX_LIVE_BYTES = 512 * 1024 * 1024;
+
+/*
+ * What one sweep hands back. Moving a page is a write on the event loop: on a
+ * workstation 8 MiB took about 0.1 s. What is left waits for the next sweep, a
+ * minute later.
+ */
+const SWEEP_RECLAIM_MAX_BYTES = 8 * 1024 * 1024;
+
+/* Past this, a reclaim is worth a line in the journal. */
+const RECLAIM_REPORT_MS = 250;
 
 /**
  * The covering indexes the restore reads, and nothing else does.
@@ -130,7 +129,7 @@ const RESTORE_INDEX_BUILD_DELAY_MS = 10_000;
  * because these are rowid tables: a secondary index carries the rowid, not the
  * TEXT primary key.
  */
-export const RESTORE_INDEX_STATEMENTS: readonly string[] = [
+const RESTORE_INDEX_STATEMENTS: readonly string[] = [
   "CREATE INDEX IF NOT EXISTS idx_search_jobs_restore ON search_jobs (idle_at_ms, id, payload_bytes)",
   "CREATE INDEX IF NOT EXISTS idx_matrix_jobs_restore ON matrix_jobs (idle_at_ms, id, payload_bytes)",
   "CREATE INDEX IF NOT EXISTS idx_purchase_paths_restore ON purchase_paths (session_id, payload_bytes)",
@@ -138,13 +137,10 @@ export const RESTORE_INDEX_STATEMENTS: readonly string[] = [
 
 /**
  * What the restore reads to decide what fits its budget, and nothing more.
- *
- * Exported for the same reason as the sweep below: a case holds it against
- * `EXPLAIN QUERY PLAN`, and with `RESTORE_INDEX_STATEMENTS` in place every
- * access must be covering. It is one query over three tables whose rows are
- * the cache, so a plan that fetches a row is a plan that reads a payload.
+ * With `RESTORE_INDEX_STATEMENTS` in place every access is covering: these
+ * rows are the cache, so a plan that fetches a row reads a payload.
  */
-export const PERSISTED_RESTORE_SELECT_SQL = `
+const PERSISTED_RESTORE_SELECT_SQL = `
   SELECT
     search_jobs.id,
     'search' AS kind,
@@ -171,13 +167,16 @@ export const PERSISTED_RESTORE_SELECT_SQL = `
   ORDER BY idleAtMs DESC, kind ASC, id ASC
 `;
 
-export const PERSISTED_SWEEP_STATEMENTS: readonly string[] = [
+/*
+ * What the sweep runs, in order, with the cutoff bound to `?1`. One statement
+ * per condition, so that each one seeks an index: an `OR` across age and status
+ * leaves SQLite nothing to seek, and a table scan here reads every payload.
+ */
+const PERSISTED_SWEEP_STATEMENTS: readonly string[] = [
   /*
-   * The jobs go first and their purchase paths follow as orphans, which is the
-   * same set in a cheaper order. Deleting the paths first meant naming the
-   * doomed jobs inside an `IN (… UNION …)`, and there the planner stopped
-   * seeking: to keep the union's branches in id order it walked the primary
-   * key and read every row to test its age — the table again, payloads and all.
+   * Jobs go first and their purchase paths follow as orphans: deleting the
+   * paths first would name the doomed jobs inside an `IN (… UNION …)`, where the
+   * planner walks the primary key and reads every row to test its age.
    */
   "DELETE FROM search_jobs WHERE idle_at_ms < ?1",
   `DELETE FROM search_jobs WHERE status IN (${SWEEPABLE_JOB_STATUS_LIST})`,
@@ -185,9 +184,8 @@ export const PERSISTED_SWEEP_STATEMENTS: readonly string[] = [
   `DELETE FROM matrix_jobs WHERE status IN (${SWEEPABLE_JOB_STATUS_LIST})`,
   /*
    * By rowid, so the search for orphans runs inside `idx_purchase_paths_session`
-   * — session_id and rowid, no payloads — and only the rows that are actually
-   * going get read. Asking for them directly made SQLite scan the table, and
-   * this is the widest table of the three.
+   * (session_id and rowid, no payloads) and reads only the rows being deleted;
+   * selecting them directly scans the widest table of the three.
    */
   `DELETE FROM purchase_paths
      WHERE rowid IN (
@@ -226,7 +224,7 @@ interface SearchSessionMetadata {
   error?: string;
 }
 
-export interface SearchSessionRecord {
+interface SearchSessionRecord {
   id: string;
   request: SearchRequest;
   providerContext?: ProviderContext;
@@ -260,6 +258,8 @@ export interface MatrixJobRecord {
   warnings: string[];
   providerDiagnostics?: ProviderDiagnostics[];
   status: SearchJobStatus;
+  /** Running, and still waiting for search capacity. */
+  queued?: boolean;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -271,7 +271,6 @@ export interface SearchJobRecord {
   id: string;
   request: SearchRequest;
   providerContext?: ProviderContext;
-  offers: CanonicalOffer[];
   allOffers: CanonicalOffer[];
   searchMeta: SearchMeta;
   providerMeta: ProviderMeta;
@@ -279,6 +278,8 @@ export interface SearchJobRecord {
   providerDiagnostics?: ProviderDiagnostics[];
   sortMode: SortMode;
   status: SearchJobStatus;
+  /** Running, and still waiting for search capacity. */
+  queued?: boolean;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -318,7 +319,7 @@ interface StoreDiagnostics {
   };
 }
 
-export interface CancelRunningJobsSummary {
+interface CancelRunningJobsSummary {
   searchJobs: number;
   matrixJobs: number;
 }
@@ -330,24 +331,15 @@ interface PurgeSummary {
   purchasePaths: number;
 }
 
-export type SessionStoreTimerHandle = unknown;
+type SessionStoreTimerHandle = unknown;
 
 /*
- * The seam the store reads time through.
- *
- * Two timers make the store's observable behaviour depend on the wall clock:
- * the 180ms persist debounce and the resident-budget grace recheck, which is
- * armed for a full `COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS` after a job
- * completes. A test that wanted to watch either had to sleep for real and then
- * poll against a deadline, which is a race it loses as soon as the machine is
- * busy — and the grace recheck gave it a five-second wait to win.
- *
- * `now` and the timers travel together on purpose. A virtual clock paired with
- * real `setTimeout` is not a coherent world: the store computes its delays as
- * `nextEligibleAt - now`, so a caller that could move one without the other
- * would arm timers against a deadline that no longer means anything.
+ * The seam the store reads time through. `now` and the timers travel together:
+ * the store computes its delays as `nextEligibleAt - now`, so a caller that
+ * could move one without the other would arm timers against a deadline that
+ * no longer means anything.
  */
-export interface SessionStoreScheduler {
+interface SessionStoreScheduler {
   now(): number;
   setTimeout(callback: () => void, delayMs: number): SessionStoreTimerHandle;
   clearTimeout(handle: SessionStoreTimerHandle): void;
@@ -475,6 +467,26 @@ function allSql<T>(db: Database, sql: string, ...params: any[]): T[] {
   }
 }
 
+interface SqlitePageStats {
+  pageCount: number;
+  freePages: number;
+  pageSize: number;
+  autoVacuum: number;
+}
+
+function readPageStats(db: Database): SqlitePageStats {
+  const pragma = (name: string): number => {
+    const row = getSql<Record<string, unknown>>(db, `PRAGMA ${name}`);
+    return Number(row ? Object.values(row)[0] : 0) || 0;
+  };
+  return {
+    pageCount: pragma("page_count"),
+    freePages: pragma("freelist_count"),
+    pageSize: pragma("page_size"),
+    autoVacuum: pragma("auto_vacuum"),
+  };
+}
+
 function resolveIdleTimestampMs(record: {
   updatedAt?: string;
   lastAccessedAt?: string;
@@ -499,6 +511,8 @@ function resolveSearchCompletionTimestampMs(record: {
   return 0;
 }
 
+/* The token is not part of the key: a job keeps none, and a cached list only
+   seeds the answer while the providers are asked again with the current one. */
 function normalizeProviderContextForSearchCache(
   providerContext: ProviderContext | undefined,
 ): {
@@ -521,28 +535,6 @@ function normalizeProviderContextForSearchCache(
       lang: String(providerContext.costamar.lang ?? "").trim(),
     },
   };
-}
-
-function hasCompatibleCostamarSearchCacheToken(
-  requestedContext: ProviderContext | undefined,
-  candidateContext: ProviderContext | undefined,
-): boolean {
-  const requestedCostamar = requestedContext?.costamar;
-  const candidateCostamar = candidateContext?.costamar;
-  if (!requestedCostamar && !candidateCostamar) {
-    return true;
-  }
-  if (!requestedCostamar || !candidateCostamar) {
-    return false;
-  }
-
-  const requested = String(requestedCostamar.token ?? "").trim();
-  const candidate = String(candidateCostamar.token ?? "").trim();
-  if (!requested || !candidate) {
-    return false;
-  }
-
-  return requested === candidate;
 }
 
 function normalizeSearchRequestForSearchCache(request: SearchRequest): SearchRequest {
@@ -649,9 +641,30 @@ function redactSearchJobForPersistence(job: SearchJobRecord): SearchJobRecord {
   return {
     ...job,
     providerContext: redactProviderContextForPersistence(job.providerContext),
-    offers: job.offers.map(redactOfferForPersistence),
     allOffers: job.allOffers.map(redactOfferForPersistence),
   };
+}
+
+/* A job keeps one list, `allOffers`. The row still carries an empty `offers`:
+   a release that kept a filtered copy maps over it when it boots, and a
+   rollback to one has to read rows written here. What an earlier layout kept
+   beside `allOffers`, the filtered copy or its ids, is not read back. */
+type PersistedSearchJob = SearchJobRecord & {
+  offers?: CanonicalOffer[];
+  offerIds?: string[];
+};
+
+function encodeSearchJobForPersistence(job: SearchJobRecord): PersistedSearchJob {
+  return { ...redactSearchJobForPersistence(job), offers: [] };
+}
+
+function decodePersistedSearchJob(parsed: PersistedSearchJob | undefined): SearchJobRecord | undefined {
+  if (!parsed) {
+    return undefined;
+  }
+
+  const { offers: _offers, offerIds: _offerIds, ...job } = parsed;
+  return job;
 }
 
 function redactMatrixJobForPersistence(job: MatrixJobRecord): MatrixJobRecord {
@@ -678,8 +691,18 @@ function matrixJobPersistenceVersion(job: MatrixJobRecord): string {
   return `${job.revision}\u0000${job.status}\u0000${job.updatedAt}\u0000${job.lastAccessedAt}`;
 }
 
+/* Every save compares the version of each purchase path in memory, and a
+   fingerprint carries the provider's reference text, so the version holds a
+   short digest of it rather than the text. */
+const fingerprintDigests = new WeakMap<StoredPurchasePath, string>();
+
 function purchasePathPersistenceVersion(entry: StoredPurchasePath): string {
-  return `${entry.fingerprint}\u0000${entry.updatedAt}\u0000${entry.lastAccessedAt}`;
+  let digest = fingerprintDigests.get(entry);
+  if (digest === undefined) {
+    digest = Bun.hash(entry.fingerprint).toString(36);
+    fingerprintDigests.set(entry, digest);
+  }
+  return `${digest}\u0000${entry.updatedAt}\u0000${entry.lastAccessedAt}`;
 }
 
 function onlyProviderDiagnosticsChanged(
@@ -760,10 +783,14 @@ export class SearchSessionStore {
     if (dbPath) {
       mkdirSync(dirname(dbPath), { recursive: true });
       this.db = new Database(dbPath);
+      this.db.run("PRAGMA busy_timeout = 5000;");
+      /* Ahead of WAL: a new file takes a vacuum mode only while it is empty,
+         and switching to WAL writes its first page. A file created without
+         one keeps it until a VACUUM rewrites it (`vacuumIfWorthwhile`). */
+      this.db.run("PRAGMA auto_vacuum = INCREMENTAL;");
       this.db.run("PRAGMA journal_mode = WAL;");
       this.db.run("PRAGMA synchronous = NORMAL;");
       this.db.run("PRAGMA temp_store = MEMORY;");
-      this.db.run("PRAGMA busy_timeout = 5000;");
       this.db.run("PRAGMA foreign_keys = ON;");
       this.initializeDatabase();
       this.loadPersisted();
@@ -772,20 +799,11 @@ export class SearchSessionStore {
   }
 
   /*
-   * The indexes that make the next boot cheap, built after this one.
-   *
-   * The restore picks what fits its budget by reading `idle_at_ms`,`id` and
-   * `payload_bytes` from every job, and those three do not sit in one index, so
-   * SQLite walks the age index and fetches each row — and a row here is a
-   * payload. Measured on the box once the prune stopped warming the page cache
-   * for it, that select was 15.5s of a 20.5s boot.
-   *
-   * Covering indexes answer it without touching a row, but building them reads
-   * every table once, and the boot is exactly where that cannot happen: the
-   * port waits for it and the release engine waits for the port. So they are
-   * built a few seconds *after* the process is serving, once, and every boot
-   * after this one finds them already there. The build blocks while it runs and
-   * says how long it took.
+   * The indexes that make the next boot cheap, built after this one. Building
+   * them reads every table once, and the boot cannot pay that: the port waits
+   * for it and the release engine waits for the port. So they are built a few
+   * seconds *after* the process is serving, and every later boot finds them
+   * already there. The build blocks while it runs and reports a slow one.
    */
   private scheduleRestoreIndexBuild(): void {
     this.restoreIndexTimer = this.scheduler.setTimeout(() => {
@@ -814,14 +832,10 @@ export class SearchSessionStore {
   }
 
   /*
-   * Hold a poll open until the job it asks about actually moves.
-   *
-   * The UI used to ask every 900ms and so learned about a finished search
-   * ~450ms plus one round trip after it finished. Parking the request here
-   * instead makes the answer leave the moment `updateSearchJob` bumps the
-   * revision. Everything that cannot move — a job the store no longer holds,
-   * one already past the caller's revision, one that has already finished —
-   * resolves at once, so a caller never waits for news that will not come.
+   * Hold a poll open until the job it asks about moves, so the answer leaves
+   * the moment `updateSearchJob` bumps the revision. Everything that cannot
+   * move — a job the store no longer holds, one already past the caller's
+   * revision, one that has already finished — resolves at once.
    */
   waitForSearchJobChange(jobId: string, sinceRevision: number, timeoutMs: number): Promise<void> {
     const job = this.searchJobs.get(jobId);
@@ -921,11 +935,12 @@ export class SearchSessionStore {
     const db = this.db;
     if (db) {
       this.db = undefined;
-      try {
-        db.run("PRAGMA wal_checkpoint(TRUNCATE);");
-      } catch {
-        // Closing the database is still the important cleanup path.
-      }
+      /* No checkpoint of its own. `wal_checkpoint(TRUNCATE)` waits out the busy
+         timeout for any reader still on the WAL, the redirect unit reads this
+         file, and nothing interrupts a synchronous call during a stop. SQLite
+         checkpoints the WAL itself, when the last connection closes or once it
+         outgrows the auto-checkpoint size, and the next open reads it either
+         way. */
       db.close(true);
     }
   }
@@ -982,7 +997,6 @@ export class SearchSessionStore {
       const rewrittenOffer = this.rewriteOfferPaths(sessionId, updatedOffer);
       return {
         ...current,
-        offers: current.offers.map((offer) => offer.id === updatedOffer.id ? rewrittenOffer : offer),
         allOffers: current.allOffers.map((offer) => offer.id === updatedOffer.id ? rewrittenOffer : offer),
       };
     });
@@ -994,13 +1008,10 @@ export class SearchSessionStore {
     const id = crypto.randomUUID();
     const timestamp = nowIso();
     const rewrittenAllOffers = input.allOffers.map((offer) => this.rewriteOfferPaths(id, offer));
-    const rewrittenOffersById = new Map(rewrittenAllOffers.map((offer) => [offer.id, offer] as const));
-    const rewrittenOffers = input.offers.map((offer) => rewrittenOffersById.get(offer.id) ?? this.rewriteOfferPaths(id, offer));
 
     const record: SearchJobRecord = {
       ...input,
       id,
-      offers: rewrittenOffers,
       allOffers: rewrittenAllOffers,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -1014,10 +1025,7 @@ export class SearchSessionStore {
 
     this.searchJobs.set(id, record);
     this.syncSearchSessionMetadata(record);
-    this.pruneSessionOwners(id, new Set([
-      ...rewrittenAllOffers.map((offer) => offer.id),
-      ...rewrittenOffers.map((offer) => offer.id),
-    ]));
+    this.pruneSessionOwners(id, new Set(rewrittenAllOffers.map((offer) => offer.id)));
     this.schedulePersist();
     return record;
   }
@@ -1080,10 +1088,6 @@ export class SearchSessionStore {
         normalizeProviderContextForSearchCache(candidate.providerContext),
       );
       if (candidateContextKey !== providerContextKey) {
-        continue;
-      }
-
-      if (!hasCompatibleCostamarSearchCacheToken(input.providerContext, candidate.providerContext)) {
         continue;
       }
 
@@ -1152,10 +1156,6 @@ export class SearchSessionStore {
         continue;
       }
 
-      if (!hasCompatibleCostamarSearchCacheToken(input.providerContext, candidate.providerContext)) {
-        continue;
-      }
-
       const completionTimestamp = resolveSearchCompletionTimestampMs(candidate);
       if ((nowMs - completionTimestamp) > input.maxAgeMs) {
         continue;
@@ -1200,21 +1200,14 @@ export class SearchSessionStore {
       return current;
     }
 
-    const offersUnchanged = updated.offers === current.offers && updated.allOffers === current.allOffers;
+    const offersUnchanged = updated.allOffers === current.allOffers;
     const timestamp = nowIso();
     const rewrittenAllOffers = offersUnchanged
       ? current.allOffers
       : updated.allOffers.map((offer) => this.rewriteOfferPaths(jobId, offer));
-    const rewrittenOffersById = offersUnchanged
-      ? undefined
-      : new Map(rewrittenAllOffers.map((offer) => [offer.id, offer] as const));
-    const rewrittenOffers = offersUnchanged
-      ? current.offers
-      : updated.offers.map((offer) => rewrittenOffersById?.get(offer.id) ?? this.rewriteOfferPaths(jobId, offer));
     const base: SearchJobRecord = {
       ...updated,
       id: current.id,
-      offers: rewrittenOffers,
       allOffers: rewrittenAllOffers,
       createdAt: current.createdAt,
       updatedAt: timestamp,
@@ -1234,10 +1227,7 @@ export class SearchSessionStore {
     this.syncSearchSessionMetadata(next);
     this.wakeJobChangeWaiters(this.searchJobWaiters, jobId);
     if (!offersUnchanged) {
-      this.pruneSessionOwners(jobId, new Set([
-        ...rewrittenAllOffers.map((offer) => offer.id),
-        ...rewrittenOffers.map((offer) => offer.id),
-      ]));
+      this.pruneSessionOwners(jobId, new Set(rewrittenAllOffers.map((offer) => offer.id)));
     }
     if (options.persist === false) {
       this.deferredSearchJobs.add(jobId);
@@ -1261,10 +1251,12 @@ export class SearchSessionStore {
 
       const warnings = uniqueStrings([...current.warnings, message]);
       const metaWarnings = uniqueStrings([...(current.searchMeta.warnings ?? []), message]);
-      const hasPartialResults = current.offers.length > 0 || current.allOffers.length > 0;
+      const hasPartialResults = current.allOffers.length > 0;
       const cachePartial = Boolean(options.cachePartial && hasPartialResults);
+      /* A stopped job no longer waits for anything. */
+      const { queued: _queued, ...stopped } = current;
       return {
-        ...current,
+        ...stopped,
         status: cachePartial ? "completed" : "cancelled",
         error: cachePartial ? undefined : message,
         warnings,
@@ -1494,8 +1486,9 @@ export class SearchSessionStore {
       const metaWarnings = uniqueStrings([...(current.searchMeta.warnings ?? []), message]);
       const hasPartialResults = current.cells.some((cell) => cell.confidence !== "loading");
       const cachePartial = Boolean(options.cachePartial && hasPartialResults);
+      const { queued: _queued, ...stopped } = current;
       return {
-        ...current,
+        ...stopped,
         status: cachePartial ? "completed" : "cancelled",
         error: cachePartial ? undefined : message,
         warnings,
@@ -1546,18 +1539,10 @@ export class SearchSessionStore {
     }
 
     /*
-     * A running job is resident too.
-     *
-     * The budget used to skip everything that was not `completed`, so the jobs
-     * costing the most memory were exactly the ones it could not see. A
-     * migratory sweep is one server search job per month, up to twelve at once,
-     * each holding its full `allOffers` — and while the later months run, the
-     * finished ones sat resident under a budget that believed it had room.
-     *
-     * Running jobs are counted but never evicted: cancelling live work to save
-     * memory would be answering the wrong question. What they do is bring the
-     * eviction of *completed* jobs forward, which is the relief that was
-     * missing.
+     * A running job is resident too: a migratory sweep is one search job per
+     * month, up to twelve at once, each holding its full `allOffers`. Running
+     * jobs are counted but never evicted — cancelling live work to save memory
+     * is the wrong trade — so they bring the eviction of completed jobs forward.
      */
     const candidates: ResidentJobCandidate[] = [];
     let inFlightBytes = 0;
@@ -1628,6 +1613,13 @@ export class SearchSessionStore {
       evictedBytes += candidate.bytes;
     }
 
+    /* What an evicted job held goes back to the system now, not at the next
+       collection: a sweep evicts one month as the next one grows, and with
+       this collection the runner came back to 170 MiB after a two-month sweep,
+       against 400 without it. */
+    if (evictedBytes >= EVICTION_COLLECT_MIN_BYTES) {
+      Bun.gc(true);
+    }
     if (evictedJobs > 0) {
       console.warn(
         `Fly Desk resident cache evicted completed jobs: jobs=${evictedJobs} payloadBytes=${evictedBytes} budgetBytes=${this.completedResidentBudgetBytes}`,
@@ -1692,6 +1684,91 @@ export class SearchSessionStore {
       sessions: Math.max(0, beforeSessions - this.sessions.size),
       purchasePaths: Math.max(0, beforePurchasePaths - this.purchasePaths.size),
     };
+  }
+
+  /*
+   * The one full VACUUM, run by the process that owns the file before its port
+   * opens. It pays only once free pages are most of the file: its cost follows
+   * the live pages it copies, and what it buys is the free ones. It also gives a
+   * file created without a vacuum mode the incremental one, after which
+   * `reclaimFreePages` keeps the file compact and this rarely finds work. The
+   * copy goes to a temporary file rather than memory: it is the whole live
+   * cache, on a host where the runner already peaks near a gigabyte.
+   */
+  vacuumIfWorthwhile(): void {
+    const db = this.db;
+    if (!db) {
+      return;
+    }
+
+    const before = readPageStats(db);
+    const liveBytes = (before.pageCount - before.freePages) * before.pageSize;
+    if (before.freePages * 2 <= before.pageCount || liveBytes > BOOT_VACUUM_MAX_LIVE_BYTES) {
+      return;
+    }
+
+    const startedAt = Date.now();
+    try {
+      db.run("PRAGMA temp_store = FILE;");
+      db.run("VACUUM;");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "unknown failure";
+      console.warn(`Fly Desk session cache VACUUM skipped: ${detail}`);
+      return;
+    } finally {
+      db.run("PRAGMA temp_store = MEMORY;");
+    }
+
+    /* The VACUUM wrote every live page through the WAL, and the WAL file keeps
+       that size until a checkpoint truncates it. */
+    const vacuumedAt = Date.now();
+    let checkpoint = "failed";
+    try {
+      checkpoint = getSql<{ busy: number }>(db, "PRAGMA wal_checkpoint(TRUNCATE);")?.busy ? "busy" : "truncated";
+    } catch {
+      // Only the WAL file's size waits for the next checkpoint.
+    }
+    const after = readPageStats(db);
+    console.warn(
+      "Fly Desk session cache compacted: "
+      + `vacuumMs=${vacuumedAt - startedAt} checkpointMs=${Date.now() - vacuumedAt} checkpoint=${checkpoint} `
+      + `fileBytes=${before.pageCount * before.pageSize}->${after.pageCount * after.pageSize} `
+      + `freePages=${before.freePages}->${after.freePages} autoVacuum=${before.autoVacuum}->${after.autoVacuum}`,
+    );
+  }
+
+  /*
+   * After a sweep, hands the pages it freed back to the filesystem, a bounded
+   * amount at a time. What the sweep removed in memory is written first, so its
+   * rows are gone before their pages are counted. A file without the incremental
+   * mode is left as it is until `vacuumIfWorthwhile` gives it one.
+   */
+  reclaimFreePages(): void {
+    const db = this.db;
+    if (!db) {
+      return;
+    }
+
+    this.persistNow();
+    const stats = readPageStats(db);
+    if (stats.autoVacuum !== AUTO_VACUUM_INCREMENTAL || stats.freePages === 0 || stats.pageSize <= 0) {
+      return;
+    }
+
+    const pages = Math.min(stats.freePages, Math.max(1, Math.floor(SWEEP_RECLAIM_MAX_BYTES / stats.pageSize)));
+    const startedAt = Date.now();
+    try {
+      runSql(db, `PRAGMA incremental_vacuum(${pages});`);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "unknown failure";
+      console.warn(`Fly Desk session cache reclaim skipped: ${detail}`);
+      return;
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs >= RECLAIM_REPORT_MS) {
+      console.warn(`Fly Desk session cache reclaimed free pages: pages=${pages} ms=${elapsedMs}`);
+    }
   }
 
   getDiagnostics(): StoreDiagnostics {
@@ -1914,7 +1991,7 @@ export class SearchSessionStore {
       return undefined;
     }
 
-    const job = parseJsonPayload<SearchJobRecord>(row.payload);
+    const job = decodePersistedSearchJob(parseJsonPayload<PersistedSearchJob>(row.payload));
     return job?.id === jobId && job.status === "completed"
       ? redactSearchJobForPersistence(job)
       : undefined;
@@ -2313,7 +2390,7 @@ export class SearchSessionStore {
       const changedSearchJobs = activeSearchJobs
         .filter((job) => this.persistedSearchJobs.get(job.id)?.version !== searchJobPersistenceVersion(job))
         .map((job) => {
-          const persisted = redactSearchJobForPersistence(job);
+          const persisted = encodeSearchJobForPersistence(job);
           const payload = JSON.stringify(persisted);
           return {
             job: persisted,
@@ -2547,9 +2624,9 @@ export class SearchSessionStore {
       CREATE INDEX IF NOT EXISTS idx_search_jobs_lookup
         ON search_jobs (status, sort_mode, request_key, provider_ids_key, provider_context_key, idle_at_ms);
 
-      -- The sweep's own index. idx_search_jobs_lookup leads with status, so a
-      -- range on idle_at_ms alone cannot seek it and the prune fell back to
-      -- reading the table: every row, payload and all.
+      -- The sweep's own index: idx_search_jobs_lookup leads with status, so a
+      -- range on idle_at_ms alone cannot seek it, and scanning the table reads
+      -- every payload.
       CREATE INDEX IF NOT EXISTS idx_search_jobs_idle_at
         ON search_jobs (idle_at_ms);
 
@@ -2592,24 +2669,10 @@ export class SearchSessionStore {
     }
 
     /*
-     * What a row's payload weighs, written down instead of weighed at boot.
-     *
-     * The restore used to ask SQLite for `length(payload)` on every row of
-     * every table — twice: once to pick what fits the resident budget, once to
-     * fill the maps that decide what a later write owes. `length` on a stored
-     * value is a read, so booting measured the whole store: on the production
-     * box that is 55 jobs and 1.78 GB, and the search runner took **84 seconds
-     * to open its port**, of which 47 went to the first scan and the rest to
-     * the second. The release engine's health window is shorter than that, so
-     * every deployment failed activation, rolled back, and paid the same 84
-     * seconds again on the way out — «previous release did not recover
-     * cleanly», with the port closed throughout.
-     *
-     * The column is filled on write. A row written before it existed keeps
-     * `NULL`, and every read below coalesces that to one byte over the resident
-     * budget: an unmeasured row is treated as too big to hold in memory, which
-     * is what it was being treated as anyway, and no boot ever reads a payload
-     * again to find out.
+     * What a row's payload weighs, recorded on write so that no boot reads a
+     * payload to measure it: `length()` on a stored value is a read. A row
+     * without a recorded size holds `NULL`, which every read coalesces to one
+     * byte over the restore budget: an unmeasured row is too big to restore.
      */
     for (const table of ["search_jobs", "matrix_jobs", "purchase_paths"] as const) {
       const columns = new Set(
@@ -2629,13 +2692,8 @@ export class SearchSessionStore {
 
   private loadPersisted(): void {
     /*
-     * Timed by phase, and said out loud when it is slow.
-     *
-     * This runs before the port opens, so a slow boot is an outage and a failed
-     * deployment (see the restore budget above). Two rounds of local
-     * measurement pointed at the wrong phase before the box's own numbers
-     * settled it, so the phases now report themselves: one line, no perf flag
-     * to remember, and only when the total is worth reading.
+     * Timed by phase and logged when slow, perf flag or not: this runs before
+     * the port opens, so a slow boot is an outage and a failed deployment.
      */
     const startedAt = Date.now();
     const nowMs = this.scheduler.now();
@@ -2700,9 +2758,8 @@ export class SearchSessionStore {
       return retained;
     }
 
-    /* Only what was actually measured is summed. A row written before the size
-       column existed counts as one byte over the budget — a marker, not a
-       weight — and adding those up reported terabytes for a 1.8 GB store. */
+    /* Only what was actually measured is summed: an unmeasured row counts as
+       one byte over the budget, which is a marker, not a weight. */
     let diskOnlyBytes = 0;
     let unmeasuredJobs = 0;
     for (const candidate of diskOnly) {
@@ -2728,16 +2785,6 @@ export class SearchSessionStore {
 
     const cutoffMs = nowMs - COMPLETED_SEARCH_SESSION_TTL_MS;
     const db = this.db;
-    /*
-     * The condition is split in two, and the halves are `UNION`ed rather than
-     * `OR`ed, because an `OR` across two columns leaves SQLite nothing to seek:
-     * it read the table, and this table's rows carry the payloads. Measured on
-     * the production box, the prune alone was 16.6s of a 22.1s boot with 55
-     * jobs and 1.78 GB — while deleting nothing, because none of them had
-     * expired. Each half can use an index now: the age against
-     * `idx_*_idle_at`, and the status against the lookup index it already
-     * leads. What the sweep takes is the rows it actually removes.
-     */
     db.transaction(() => {
       for (const statement of PERSISTED_SWEEP_STATEMENTS) {
         runSql(db, statement, cutoffMs);
@@ -2798,7 +2845,7 @@ export class SearchSessionStore {
       );
       if (row) {
         if (candidate.kind === "search") {
-          const parsed = parseJsonPayload<SearchJobRecord>(row.payload);
+          const parsed = decodePersistedSearchJob(parseJsonPayload<PersistedSearchJob>(row.payload));
           if (parsed) {
             const redacted = redactSearchJobForPersistence(parsed);
             this.persistedSearchJobs.set(row.id, {
@@ -2905,7 +2952,6 @@ export class SearchSessionStore {
     return {
       request: job.request,
       providerContext: job.providerContext,
-      offers: job.offers,
       allOffers: job.allOffers,
       searchMeta: job.searchMeta,
       providerMeta: job.providerMeta,

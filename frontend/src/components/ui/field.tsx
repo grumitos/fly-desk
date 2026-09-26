@@ -12,9 +12,7 @@ function Field({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-/* The floating micro label of plate 1a: 10px 700 uppercase at 12/9, tracked
-   .04em, absolute inside the field it labels. It is the same label the merged
-   date control already used, so there is one of it rather than two. */
+/* The label parked inside the top of a field. */
 function FieldLabel({ className, ...props }: React.ComponentProps<"label">) {
   return (
     <label
