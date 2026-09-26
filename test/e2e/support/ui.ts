@@ -262,6 +262,12 @@ export const migration = {
   monthCard: (page: Page, label: string) => page.getByTestId("migration-month-card").filter({ hasText: label }),
   monthCards: (page: Page) => page.getByTestId("migration-month-card"),
   openMonth: (page: Page, label: string) => page.getByTitle(`Abrir ${label} en una pestaña nueva`),
+  /** The name a month's card is titled with: «Noviembre de 2026». */
+  monthName: (page: Page, label: string) => migration.monthCard(page, label).getByText(label, { exact: true }),
+  /** «Más bajo» on a month's card. */
+  lowest: (page: Page, label: string) => migration.monthCard(page, label).getByText("Más bajo", { exact: true }),
+  /** «Actualizando»: a priced month still being searched. */
+  updating: (page: Page, label: string) => migration.monthCard(page, label).getByText("Actualizando", { exact: true }),
 };
 
 /* ---- Reading a result row ---- */

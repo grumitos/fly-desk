@@ -13,7 +13,7 @@ import {
   sweepMonthLabel,
   TODAY,
 } from "./support/scenario.ts";
-import { durationMinutes, migration, notice, results, searchForm, searchLink } from "./support/ui.ts";
+import { durationMinutes, isUnclipped, migration, notice, results, searchForm, searchLink, showsWholeText } from "./support/ui.ts";
 
 /*
  * The migratory sweep: every day of every chosen month against both
@@ -206,4 +206,35 @@ suite.test("each month of a sweep asks for its news as soon as its search has st
   await page.clock.resume();
   providers.release();
   await waitForSweep(page, 1, 1);
+});
+
+suite.test("a month still being searched keeps its whole name beside «Más bajo» on the narrowest desk cards", async (scope) => {
+  const { fake } = scope;
+  /* The same fare every day, so both months tie for «Más bajo»; the 25th of
+     each stays with its providers, so both keep loading. */
+  fake.setFlights("both", { origin: "LIM", destination: "MAD" }, () => [
+    { outbound: MADRID_BY_BOGOTA, price: 703, baggage: { carryOn: true, checked: 1 } },
+  ]);
+  const months = [NOVEMBER, DECEMBER];
+  const held = fake.hold("*", (request) => (request.op === "agil.search" || request.op === "cbplus.search")
+    && months.some((month) => request.query?.departureDate === `${month}-25`));
+  const { page } = await scope.signedInPage(searchLink({ mode: "migration", trip: "one-way", origin: "LIM", destination: "MAD", months }));
+  await searchForm.submit(page).click();
+  for (const month of months) {
+    await migration.lowest(page, sweepMonthLabel(month)).waitFor({ timeout: 30_000 });
+    await migration.updating(page, sweepMonthLabel(month)).waitFor({ state: "attached" });
+  }
+
+  /* «Noviembre de 2026» is the widest month name. At 776 a desk card is the
+     narrowest the grid draws; 1024 and 1280 are where the year was lost. */
+  for (const width of [776, 1024, 1280]) {
+    await page.setViewportSize({ width, height: 800 });
+    for (const month of months) {
+      const label = sweepMonthLabel(month);
+      assert.ok(await showsWholeText(migration.monthName(page, label)), `${width}px: «${label}» is cut off`);
+      assert.ok(await isUnclipped(migration.lowest(page, label)), `${width}px: «Más bajo» on ${label} is cut off`);
+      assert.equal(await migration.updating(page, label).count(), 1, `${width}px: ${label} no longer says it is loading`);
+    }
+  }
+  held.release();
 });

@@ -2229,6 +2229,23 @@
     }
   }
 
+  /* Narrower, not even the spinner fits: the longest month («Noviembre de
+     2026», 125px), «Más bajo» and the spinner need 223 with their gaps, 228
+     with room for another renderer's text. There the loading badge after «Más
+     bajo» gives way, its word still for screen readers, and the month and «Más
+     bajo» stay whole down to the narrowest desk head (198). */
+  @container fd-month-head (max-width: 227.98px) {
+    .fd-month-badge:not(.fd-month-badge--quiet) + .fd-month-badge--quiet {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      padding: 0;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+  }
+
   .fd-month-hero {
     display: grid;
     margin-top: 11px;
