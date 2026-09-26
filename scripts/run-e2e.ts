@@ -95,13 +95,16 @@ function runFile(file: string): Promise<FileResult> {
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
-    child.stdout.on("data", (chunk: Buffer) => {
+    let settled = false;
+    child.stdout?.on("data", (chunk: Buffer) => {
       output += chunk.toString("utf8");
     });
-    child.stderr.on("data", (chunk: Buffer) => {
+    child.stderr?.on("data", (chunk: Buffer) => {
       output += chunk.toString("utf8");
     });
-    child.on("close", (code) => {
+    const finish = (code: number | null) => {
+      if (settled) return;
+      settled = true;
       const result: FileResult = {
         file,
         exitCode: code ?? 1,
@@ -111,7 +114,14 @@ function runFile(file: string): Promise<FileResult> {
       /* One file's report at a time, whole, so parallel files never interleave. */
       process.stdout.write(`\n━━ ${basename(file)} · ${(result.wallMs / 1000).toFixed(1)} s · exit ${result.exitCode}\n${output}`);
       resolveRun(result);
+    };
+    /* A file whose process never starts (the Bun binary replaced mid-run, say)
+       fails, instead of leaving the whole run waiting for a close that never comes. */
+    child.on("error", (error) => {
+      output += `\nCould not start the file's test process: ${error.message}\n`;
+      finish(1);
     });
+    child.on("close", finish);
   });
 }
 
