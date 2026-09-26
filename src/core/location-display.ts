@@ -1,12 +1,14 @@
 /*
  * The place an IATA code names, for the surfaces that have only the code.
  *
- * It is read three times and each read is a promise: the itinerary line in the
+ * It is read four times and each read is a promise: the itinerary line in the
  * detail, the route and the migratory-package title of a commercial quotation
- * — which is a document that leaves the agency — and the flag beside that
- * title, through `countryCodeForIataCode`. So the rule is: **only codes that
- * are certain go in**. A code that is missing falls back to the two or three
- * letters, which says less but never says something false.
+ * — which is a document that leaves the agency — the flag beside that title,
+ * through `countryCodeForIataCode`, and a station in the history of the origin
+ * and destination panels that no cached provider answer names, through
+ * `curatedLocationSuggestion`. So the rule is: **only codes that are certain
+ * go in**. A code that is missing falls back to the two or three letters,
+ * which says less but never says something false.
  *
  * What it covers is what a Lima desk sells and connects through: Peru's own
  * network, Latin America, the North American gateways, and the European ones
@@ -19,6 +21,9 @@
  * what tells the two apart. Spanish spelling with its accents, because these
  * strings are read by customers.
  */
+import { countryNameFromCode } from "./location-ranking";
+import type { LocationSuggestion } from "./types";
+
 const IATA_LOCATION_FALLBACKS: Record<string, { city: string; countryCode: string }> = {
   AEP: { city: "Buenos Aires", countryCode: "AR" },
   AGP: { city: "Málaga", countryCode: "ES" },
@@ -122,6 +127,28 @@ export function cityNameForIataCode(code?: string): string | undefined {
 
 export function countryCodeForIataCode(code?: string): string | undefined {
   return IATA_LOCATION_FALLBACKS[normalizeIataCode(code)]?.countryCode;
+}
+
+/**
+ * A certain code as a station suggestion: its city and its country, and no
+ * type, because this list does not say whether a code is a city or one of its
+ * airports. `undefined` for a code the list does not hold.
+ */
+export function curatedLocationSuggestion(code?: string): LocationSuggestion | undefined {
+  const normalizedCode = normalizeIataCode(code);
+  const entry = IATA_LOCATION_FALLBACKS[normalizedCode];
+  if (!entry) {
+    return undefined;
+  }
+
+  const country = countryNameFromCode(entry.countryCode);
+  return {
+    code: normalizedCode,
+    city: entry.city,
+    country,
+    countryCode: entry.countryCode,
+    label: `${normalizedCode} - ${[entry.city, country].filter(Boolean).join(", ")}`,
+  };
 }
 
 /*

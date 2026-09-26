@@ -147,6 +147,21 @@ that screen does, including while a field is being edited to correct a
 finished route (11 §2.4); a suggestion panel that opens covers it. It does not
 come back in the active screen, where it would compete with the results.
 
+## Rules for the station panel
+
+**A history row is named from what the web unit already holds.**
+`GET /api/location-usage-suggestions` answers `stations` beside its lists: for
+each code in them, the station a provider's answer in the suggestion cache
+(`src/location-suggestion-cache.ts`) names, from any query and any browser, the
+entry touched last winning; failing that, the city and country of
+`src/core/location-display.ts`, with no type, because that list does not say
+whether a code is a city or one of its airports; failing both, nothing, and the
+row draws the code alone rather than a guessed name. Opening the panel asks no
+provider. The server resolves the names because the cache lives in the unit
+that answers this route, while a page's own cache starts empty on every load.
+The lists stay arrays of codes, which is all a page loaded before `stations`
+existed reads, so a page left open across a deployment keeps its history.
+
 ## Rules for the results column
 
 **The list and its skeleton are one measurement.** Plate 4a asks for «never more

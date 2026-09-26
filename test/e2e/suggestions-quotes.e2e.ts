@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { LocationSuggestion } from "../../src/core/types.ts";
-import { readSearchJob, searchOffers, type SearchJob } from "./support/api-client.ts";
-import { startedJob, waitForResults } from "./support/flows.ts";
+import { readSearchJob, searchOffers, searchPayloads, startSearch, type SearchJob } from "./support/api-client.ts";
+import { startedJob, waitForIdleCapacity, waitForResults } from "./support/flows.ts";
 import { defineSuite } from "./support/harness.ts";
 import type { OfferSpec } from "./support/fixtures.ts";
-import { day, eventually, providerSearches } from "./support/scenario.ts";
+import { day, eventually, providerSearches, stationLookups } from "./support/scenario.ts";
 import {
   announcement,
   detail,
@@ -53,7 +53,7 @@ suite.test("a city and its airports come back from both providers, typed by name
   for (const key of keys) {
     assert.ok(await isUnclipped(key), `the suggestions' foot cut «${await key.innerText()}»`);
   }
-  const asked = fake.requests((request) => request.op === "agil.locations" || request.op === "cbplus.locations");
+  const asked = stationLookups(fake);
   assert.deepEqual([...new Set(asked.map((request) => request.op))].sort(), ["agil.locations", "cbplus.locations"]);
 
   /* What the desk was given: the city from Agil's geotree, the airports from
@@ -116,6 +116,48 @@ suite.test("a new tab offers this browser's recent stations and the desk's frequ
     await searchForm.usageSection(other.page, "Frecuentes").getByRole("option").allInnerTexts(),
     await frequent.getByRole("option").allInnerTexts(),
   );
+});
+
+/* Three origins of one browser, the oldest first: CUZ, which the providers'
+   catalogues name; AYP (Ayacucho), which only the desk's own list of certain
+   codes names; and CHM (Chimbote), which nothing names. */
+const HISTORY_ORIGINS = ["CUZ", "AYP", "CHM"] as const;
+
+interface LocationUsageAnswer {
+  suggestions: { origin: unknown[] };
+  frequent: { origin: unknown[] };
+  recent: { origin: unknown[]; destination: unknown[] };
+  stations: LocationSuggestion[];
+}
+
+suite.test("the history names its stations from the providers' answers the desk holds, then from its list of certain codes, never by guessing and never by asking", async (scope) => {
+  const { fake } = scope;
+  const api = await scope.api();
+  const clientSessionId = "e2e-history-station-names";
+  /* Someone typed «cu» at the desk: CUZ as the providers answered it. */
+  await api.json("GET", "/api/locations?q=cu&limit=8");
+  for (const [index, code] of HISTORY_ORIGINS.entries()) {
+    await startSearch(api, searchPayloads.exact(code, "LIM", day(75 + index), undefined, { clientSessionId }));
+  }
+  await waitForIdleCapacity(api);
+
+  const lookupsBefore = stationLookups(fake).length;
+  const answer = await api.json<LocationUsageAnswer>("GET", `/api/location-usage-suggestions?clientSessionId=${clientSessionId}`);
+  assert.equal(stationLookups(fake).length, lookupsBefore, "naming the history asked a provider");
+
+  /* The lists stay codes, which is all a page loaded before the names reads. */
+  assert.deepEqual(answer.recent.origin, [...HISTORY_ORIGINS].reverse());
+  assert.deepEqual(answer.recent.destination, ["LIM"]);
+  assert.deepEqual(answer.suggestions.origin, answer.frequent.origin);
+  assert.ok(answer.frequent.origin.every((code) => typeof code === "string"), "the frequent list is no longer codes");
+
+  /* CUZ as the providers named it, typed; AYP from the list, which claims no
+     type; CHM from nowhere; and every code of the lists, the destination too. */
+  const station = (code: string) => answer.stations.find((entry) => entry.code === code);
+  assert.deepEqual([station("CUZ")?.city, station("CUZ")?.type], ["Cusco", "AIRPORT"], "CUZ was not named from the providers' answer the desk held");
+  assert.deepEqual(station("AYP"), { code: "AYP", city: "Ayacucho", country: "Perú", countryCode: "PE", label: "AYP - Ayacucho, Perú" });
+  assert.equal(station("CHM"), undefined, "a code nothing names was given a name");
+  assert.equal(station("LIM")?.city, "Lima");
 });
 
 suite.test("a domestic quote is priced in soles and ages while open, pasting it back searches only once confirmed, and copying the search says how it went", async (scope) => {
