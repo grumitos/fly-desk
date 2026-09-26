@@ -467,7 +467,7 @@
     text-align: center;
   }
 
-  /* The sortable columns are the order control (a radio group of two). */
+  /* The sortable columns are the order control (a radio group of four). */
   .fd-card__head-sort {
     display: inline-flex;
     align-items: center;

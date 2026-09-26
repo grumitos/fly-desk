@@ -29,7 +29,6 @@
   /* The heavier line under the three column headings. */
   --color-rule: #1f1f1e40;
   --color-input: #1f1f1e26;
-  --color-ring: #d97757;
 
   /* Ink in both themes: a veil derived from the text colour turns white in dark. */
   --color-scrim: #1f1f1e59;
@@ -128,7 +127,6 @@
     --color-border: #e2e1da26;
     --color-rule: #e2e1da40;
     --color-input: #e2e1da26;
-    --color-ring: #d97757;
 
     --color-warning: #d97757;
     --color-warning-soft: #d9775726;

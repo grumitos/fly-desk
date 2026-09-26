@@ -38,7 +38,7 @@ export type ResultLegModel = {
   stopsCountLabel: string
   /** " · PTY, BOG +1": the separator and its space travel with the codes. */
   stopsCodesLabel: string
-  /** The 57px stacked lane's form ("1 esc · PTY"); from two stops, the count alone. */
+  /** The stacked lane's form ("1 esc · PTY"); from two stops, the count alone. */
   stopsShortLabel: string
   stopsTitle: string
   stopsTone: "direct" | "one-stop" | "many-stops" | "unknown"
@@ -260,7 +260,7 @@ function stopsForItinerary(itinerary: Itinerary | null) {
     }
   }
 
-  /* The narrowest phone lane is 60px and «2 esc · BOG, PTY» measures 82: the
+  /* «2 esc · BOG, PTY» measures 82px, wider than the narrowest phone lane: the
      short form keeps the count and the title and detail keep the airports. */
   return {
     label: `${stopCount} escalas${shown ? ` · ${shown}${overflow}` : ""}`,
