@@ -10,6 +10,7 @@ import {
 import { createPortal } from "react-dom"
 import { AppIcon } from "@/components/ui/app-icon"
 import { useOverlayHistory } from "@/hooks/useOverlayHistory"
+import { firstFocusable, focusableWithin } from "@/lib/focusable"
 import { isTopOverlay, popOverlay, pushOverlay } from "@/lib/overlay-stack"
 import { motionToken } from "@/lib/reduced-motion"
 import { cn } from "@/lib/utils"
@@ -51,15 +52,6 @@ type Gesture = {
   lastAt: number
   velocity: number
 }
-
-const FOCUSABLE_SELECTOR = [
-  "a[href]",
-  "button:not([disabled])",
-  "input:not([disabled])",
-  "select:not([disabled])",
-  "textarea:not([disabled])",
-  "[tabindex]:not([tabindex='-1'])",
-].join(",")
 
 type SheetProps = {
   open: boolean
@@ -169,8 +161,7 @@ export function Sheet({
 
       const panel = panelRef.current
       if (!panel) return
-      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
-        .filter((element) => !element.hasAttribute("disabled") && element.offsetParent !== null)
+      const focusable = focusableWithin(panel)
       if (focusable.length === 0) {
         event.preventDefault()
         panel.focus()
@@ -191,8 +182,7 @@ export function Sheet({
 
     requestAnimationFrame(() => {
       const panel = panelRef.current
-      const first = panel?.querySelector<HTMLElement>("[data-sheet-autofocus]")
-        ?? panel?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
+      const first = panel?.querySelector<HTMLElement>("[data-sheet-autofocus]") ?? firstFocusable(panel)
       ;(first ?? panel)?.focus()
     })
 

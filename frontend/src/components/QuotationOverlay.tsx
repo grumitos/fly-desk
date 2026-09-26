@@ -4,6 +4,7 @@ import { AppIcon } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { useOverlayHistory } from "@/hooks/useOverlayHistory"
+import { firstFocusable, focusableWithin } from "@/lib/focusable"
 import { isTopOverlay, popOverlay, pushOverlay } from "@/lib/overlay-stack"
 import { QUOTATION_FARE_STALE_MINUTES } from "../../../src/core/quotation"
 
@@ -13,15 +14,6 @@ import { QUOTATION_FARE_STALE_MINUTES } from "../../../src/core/quotation"
  * next to the text it rewrites, and the age of the fare. It only ever opens
  * over a fare the provider confirmed; a phone has no panel (05 §6).
  */
-
-const FOCUSABLE_SELECTOR = [
-  "a[href]",
-  "button:not([disabled])",
-  "input:not([disabled])",
-  "select:not([disabled])",
-  "textarea:not([disabled])",
-  "[tabindex]:not([tabindex='-1'])",
-].join(",")
 
 /* The fare age is stated in minutes, so it is recomputed at half that. */
 const FARE_AGE_TICK_MS = 30_000
@@ -85,8 +77,7 @@ export function QuotationOverlay({
 
       const panel = panelRef.current
       if (!panel) return
-      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
-        .filter((element) => !element.hasAttribute("disabled") && element.offsetParent !== null)
+      const focusable = focusableWithin(panel)
       if (focusable.length === 0) {
         event.preventDefault()
         panel.focus()
@@ -107,8 +98,7 @@ export function QuotationOverlay({
 
     requestAnimationFrame(() => {
       const panel = panelRef.current
-      const first = panel?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
-      ;(first ?? panel)?.focus()
+      ;(firstFocusable(panel) ?? panel)?.focus()
     })
 
     return () => {
