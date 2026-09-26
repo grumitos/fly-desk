@@ -26,8 +26,8 @@ import { pastedQuotation, searchForm, searchLink, topBar } from "./support/ui.ts
  * Every way a search ends gives its capacity back once, and stops the work
  * behind it: it completes or its providers fail, the agent replaces it, its
  * page goes silent or loses its session, it waits for capacity and its page
- * goes away, a provider hangs, the runner restarts. «Detener» and a closed tab
- * are in `resilience.e2e.ts`.
+ * goes away, a provider hangs, the runner restarts or is stopped the way a
+ * deployment stops it. «Detener» and a closed tab are in `resilience.e2e.ts`.
  *
  * The runner stops a job nobody has followed for its lease, here 3 s instead
  * of 90. A page that goes silent can leave a poll parked for its 15 s, so the
@@ -47,8 +47,10 @@ const suite = defineSuite({
   },
 });
 
-/* The runner's words for a job it stopped because nobody followed it. */
+/* The runner's words for a job it stopped because nobody followed it, and
+   for the jobs a restart stopped. */
 const UNFOLLOWED = "Search stopped because its page stopped following it.";
+const RESTARTED = "Search stopped because Fly Desk was restarted.";
 
 const CUSCO: OfferSpec[] = [
   { outbound: ["LA2045 LIM-CUZ 05:40-07:05"], inbound: ["LA2046 CUZ-LIM 08:10-09:35"], price: 142.8, baggage: { carryOn: true, checked: 0 }, seats: 7 },
@@ -240,3 +242,40 @@ suite.test("a runner restarted mid-search starts idle, asks nothing more for tha
   await waitForIdleCapacity(api);
   held.release();
 });
+
+suite.test("a runner stopped the way a deployment stops it tells a running search's page what it found and why it stopped, blaming no provider", async (scope) => {
+  const { fake, stack } = scope;
+  const route = { origin: "LIM", destination: "CUZ" };
+  fake.setFlights("both", route, CUSCO);
+  const [answered, waiting] = [day(130), day(131)];
+  const held = holdProviderSearches(fake, { ...route, departureDate: waiting });
+  const api = await scope.api();
+  const started = await startSearch(api, searchPayloads.range("LIM", "CUZ", answered, waiting));
+  const followed = followSearchJob(api, started, 60_000);
+  /* Its first day is in from both providers; its second waits at both. */
+  const found = await eventually(async () => {
+    const job = await readSearchJob(api, started.searchJobId);
+    assert.deepEqual([...new Set(searchOffers(job).map((offer) => offer.providerSource))].sort(), ["agil-local", "costamar"]);
+    const asked = providerSearches(fake, { ...route, departureDate: waiting }).map((request) => request.op);
+    assert.deepEqual([...new Set(asked)].sort(), ["agil.search", "cbplus.search"]);
+    return searchOffers(job).length;
+  }, { message: "the first day answered by both providers and the second asked of both" });
+
+  /* What a deployment does: SIGTERM, to the runner and its workers at once. */
+  await stack.restart("runner");
+
+  /* The page following it was answered before the runner went, and the new
+     runner reads the same. */
+  const { job: told } = await followed;
+  const restored = await readSearchJob(api, started.searchJobId);
+  for (const job of [told, restored]) {
+    assert.equal(job.searchStatus, "completed");
+    assert.equal(job.searchMeta?.searchState, "search_partial");
+    assert.ok(job.searchMeta?.warnings?.includes(RESTARTED), `stopped for another reason: ${job.searchMeta?.warnings?.join(" | ")}`);
+    assert.equal(searchOffers(job).length, found, "the restart lost fares the search had found");
+    assert.deepEqual(providerStatuses(job).filter((status) => status.endsWith(":failed")), [], "the restart was read as a provider failure");
+  }
+  await assertProviderWorkStopped(fake, { ...route, departureDate: waiting });
+  await waitForIdleCapacity(api);
+  held.release();
+}, process.platform === "win32" ? { skip: "a stop on Windows is TerminateProcess, which no process can intercept" } : {});

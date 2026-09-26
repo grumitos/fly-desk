@@ -389,7 +389,8 @@ interface SearchWorkerPool {
   ) => Promise<ProviderSearchWorkerMessage>;
   prewarm: (providerId: ProviderId) => Promise<void>;
   start: () => void;
-  stop: () => void;
+  /** Resolves once every worker has exited. */
+  stop: () => Promise<void>;
 }
 
 interface PooledJob {
@@ -640,13 +641,20 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
         }
       });
     },
-    stop: () => {
-      [...workers.values()].forEach((worker) => {
-        workers.delete(worker.providerId);
-        worker.retiring = true;
-        worker.child.kill();
-      });
-    },
+    /* Closing its input and signalling it both tell a worker to stop now,
+       whichever reaches it first: one already signalled with the unit is
+       waiting for exactly this (`src/search-worker.ts`). */
+    stop: () => Promise.all([...workers.values()].map((worker) => {
+      workers.delete(worker.providerId);
+      worker.retiring = true;
+      try {
+        worker.child.stdin.end();
+      } catch {
+        /* Already closed: the signal below is enough. */
+      }
+      worker.child.kill();
+      return Promise.resolve(worker.child.exited).then(() => undefined, () => undefined);
+    })).then(() => undefined),
   };
 }
 
@@ -690,9 +698,11 @@ export function startSearchWorkerPool(): void {
   getDefaultPool().start();
 }
 
-export function stopSearchWorkerPool(): void {
-  defaultPool?.stop();
+/** Stops the pooled workers; resolves once they have exited. */
+export function stopSearchWorkerPool(): Promise<void> {
+  const stopped = defaultPool?.stop() ?? Promise.resolve();
   defaultPool = undefined;
+  return stopped;
 }
 
 export async function prewarmProviderInWorker(providerId: ProviderId): Promise<void> {

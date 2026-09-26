@@ -43,7 +43,16 @@ const runningJobs = new Map<string, AbortController>();
  * kills what is left of the unit 15 s after the stop began.
  */
 const STOP_TAB_CLOSE_TIMEOUT_MS = 2_000;
+/*
+ * How long the jobs of a signalled worker run on while its runner decides how
+ * they end. The runner lets them finish for 3 s, cancels the rest keeping what
+ * they found, and then stops its workers itself; this bound only matters when
+ * it never does.
+ */
+const STOP_GRACE_MS = 6_000;
+/* Set once the worker hangs up on its jobs; it sends nothing after that. */
 let stopping = false;
+let stopGrace: ReturnType<typeof setTimeout> | undefined;
 
 function jobIsLive(id: string): boolean {
   return !stopping && runningJobs.get(id)?.signal.aborted === false;
@@ -58,21 +67,38 @@ function send(message: ProviderSearchWorkerMessage): void {
 }
 
 /*
- * A worker can be stopped mid-search: by the runner, when it shuts down or
- * gives up on a job, and by systemd, which signals every process of the unit at
- * once. Left to its default the signal ends the worker before the `finally`
- * that closes its tab; instead it closes what it has open, within a bound, and
- * exits. A second signal while it does so changes nothing.
+ * Hangs up on every job left, closes the tabs the worker has open, within a
+ * bound, and exits. Left to its default a signal would end the worker before
+ * the `finally` that closes its tab.
  */
-function stopOnSignal(): void {
+function stopNow(): void {
   if (stopping) {
     return;
   }
   stopping = true;
+  clearTimeout(stopGrace);
   for (const controller of runningJobs.values()) {
     controller.abort();
   }
   void closeOpenBrowserTargets(STOP_TAB_CLOSE_TIMEOUT_MS).finally(() => process.exit(0));
+}
+
+/*
+ * A worker is signalled with its runner: systemd signals every process of the
+ * unit at once, and a terminal every process of its group. The jobs it runs
+ * belong to the runner's stop, which lets them finish for a moment and cancels
+ * the rest keeping what they found; a worker that died on that same signal
+ * would turn each of them into a provider failure. So the first signal while
+ * jobs run leaves them running, their answers still sent, until the runner
+ * stops the worker (a second signal, or its input closing) or `STOP_GRACE_MS`
+ * passes. A worker with no job, or stopped by its runner, stops at once.
+ */
+function stopOnSignal(): void {
+  if (stopGrace || stdinEnded || runningJobs.size === 0) {
+    stopNow();
+    return;
+  }
+  stopGrace = setTimeout(stopNow, STOP_GRACE_MS);
 }
 
 process.on("SIGTERM", stopOnSignal);
@@ -258,5 +284,10 @@ process.stdin.on("end", () => {
   }
 
   stdinEnded = true;
+  /* A runner that closes the input of a signalled worker is stopping it. */
+  if (stopGrace) {
+    stopNow();
+    return;
+  }
   maybeExit();
 });
