@@ -170,13 +170,7 @@ async function main() {
         );
       }
     });
-    /* Every job has its final state, and the pages parked on one have been
-       answered: the rest ends side by side. */
-    const workersStopped = stopSearchWorkerPool();
-    const serverStop = stopServerWithinDrainWindow();
-    if (cancelled.searchJobs > 0 || cancelled.matrixJobs > 0) {
-      await phase("unwind", () => activeRuntime?.searchAdmission.drain(SHUTDOWN_CANCEL_GRACE_MS));
-    }
+    /* Nothing starts from here on: a prewarm would spawn the workers anew. */
     clearInterval(maintenanceHandle);
     clearInterval(sessionMaintenanceHandle);
     if (startupCleanupTimer) {
@@ -187,6 +181,13 @@ async function main() {
     }
     if (providerPrewarmHandle) {
       clearInterval(providerPrewarmHandle);
+    }
+    /* Every job has its final state, and the pages parked on one have been
+       answered: the rest ends side by side. */
+    const workersStopped = stopSearchWorkerPool();
+    const serverStop = stopServerWithinDrainWindow();
+    if (cancelled.searchJobs > 0 || cancelled.matrixJobs > 0) {
+      await phase("unwind", () => activeRuntime?.searchAdmission.drain(SHUTDOWN_CANCEL_GRACE_MS));
     }
     await phase("workers", () => Promise.race([workersStopped, delay(SHUTDOWN_WORKER_EXIT_MS)]));
     await phase("http", () => serverStop);
