@@ -456,8 +456,12 @@
 
   /* ---- suggestions ---- */
 
+  /* A column: the groups scroll inside whatever height the window leaves, and
+     the keys at the foot stay whole below them. */
   .fd-suggest-panel {
     z-index: var(--fd-z-popover);
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
     border: 1px solid var(--color-border);
     border-radius: var(--fd-radius-12);
@@ -466,12 +470,26 @@
     color: var(--color-popover-foreground);
   }
 
+  .fd-suggest-panel .fd-suggest-scroll {
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
   .fd-suggest-head {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     gap: 8px;
     padding: 10px 12px 8px;
+  }
+
+  /* On a desk each group's head stays over its rows while they scroll, and a
+     row the arrows bring into view stops below it. */
+  .fd-suggest-panel .fd-suggest-head {
+    position: sticky;
+    top: 0;
+    z-index: var(--fd-z-raised);
+    background: var(--color-popover);
   }
 
   .fd-suggest-head .fd-count,
@@ -531,6 +549,7 @@
 
   .fd-suggest-foot {
     display: flex;
+    flex: none;
     align-items: center;
     gap: 16px;
     padding: 8px 12px;

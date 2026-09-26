@@ -103,13 +103,18 @@ export const searchForm = {
   locationSheet: (page: Page, field: LocationField) => page.getByRole("dialog", { name: field, exact: true }),
   locationSheetInput: (page: Page, field: LocationField) =>
     page.getByRole("combobox", { name: `${field}: buscar ciudad o IATA` }),
-  /** A match in the suggestions, named «LIM Lima Lima, Perú». */
+  /** A row of the station panel, a match or a station of the history, named «LIM Lima Lima, Perú». */
   suggestion: (page: Page, code: string) => page.getByRole("option", { name: new RegExp(`^${escapeRegExp(code)}\\b`) }),
   suggestions: (page: Page) => page.getByRole("option"),
-  /** The keys at the foot of the desk's matches: «elegir», «navegar», «esc cerrar». */
+  /** The station panel's list, which the field names while it is open. */
+  suggestionList: (page: Page) => page.getByRole("listbox"),
+  /** The row the arrows are on. */
+  activeSuggestion: (page: Page) => page.getByRole("option", { selected: true }),
+  /** The keys at the foot of the desk's station panel: «elegir», «navegar», «esc cerrar». */
   suggestionKeys: (page: Page) => page.getByText(/^(elegir|navegar|esc\s*cerrar)$/),
-  /** The «Recientes» / «Frecuentes» sections of the usage panel. */
-  usageSection: (page: Page, heading: "Recientes" | "Frecuentes") => page.getByRole("region", { name: heading, exact: true }),
+  /** A group of the station panel: the history's «Recientes» and «Frecuentes», or «Coincidencias». */
+  suggestionGroup: (page: Page, heading: "Recientes" | "Frecuentes" | "Coincidencias") =>
+    page.getByRole("region", { name: heading, exact: true }),
   departureHalf: (page: Page) => page.getByRole("button", { name: /^Salida( desde)?:/ }),
   returnHalf: (page: Page) => page.getByRole("button", { name: /^(Regreso|Salida hasta):/ }),
   calendarDay: (root: Root, isoDate: string) =>
@@ -142,6 +147,27 @@ export const searchForm = {
   /** The phone's one-line summary of a search, which reopens the form. */
   editSummary: (page: Page) => page.getByRole("button", { name: "Editar búsqueda" }),
 };
+
+/* ---- Reading the station panel ---- */
+
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/** A row as it reads, its lines joined: «CUZ Cusco Cusco, Perú», or «CHM» for a code nothing names. */
+export async function readSuggestion(option: Locator): Promise<string> {
+  return oneLine(await option.innerText());
+}
+
+/** Every row under `root`, in order, as `readSuggestion` reads it. */
+export async function readSuggestions(root: Root): Promise<string[]> {
+  return (await root.getByRole("option").allInnerTexts()).map(oneLine);
+}
+
+/** The station codes of the rows under `root`, in order. */
+export async function readSuggestionCodes(root: Root): Promise<string[]> {
+  return (await readSuggestions(root)).map((row) => row.split(" ")[0] ?? "");
+}
 
 /* ---- The notice line above the results ---- */
 

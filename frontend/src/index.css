@@ -2021,10 +2021,6 @@
   padding-top: 6px;
 }
 
-.fd-mobile-suggest-panel [role="listbox"] {
-  max-height: none;
-}
-
 .fd-mobile-suggest-panel .fd-suggest-head {
   padding-inline: 4px;
 }

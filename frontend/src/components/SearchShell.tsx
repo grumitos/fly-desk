@@ -652,6 +652,7 @@ export const SearchShell = memo(function SearchShell({
               quickSuggestions={!mobilePresentation && shouldRenderQuickChips ? usageSuggestions.frequent.origin : []}
               recentSuggestions={shouldShowUsageSuggestions ? usageSuggestions.recent.origin : []}
               frequentSuggestions={shouldShowUsageSuggestions ? usageSuggestions.frequent.origin : []}
+              usageStations={usageSuggestions.stations}
               quickSuggestionsLeavingIdle={usageSuggestionsLeaving}
               onQuickSuggestionSelect={applyOriginUsageSuggestion}
               reserveHelperSpace={reserveIdleHelperSpace && !mobilePresentation}
@@ -704,6 +705,7 @@ export const SearchShell = memo(function SearchShell({
             quickSuggestions={!mobilePresentation && shouldRenderQuickChips ? usageSuggestions.frequent.destination : []}
             recentSuggestions={shouldShowUsageSuggestions ? usageSuggestions.recent.destination : []}
             frequentSuggestions={shouldShowUsageSuggestions ? usageSuggestions.frequent.destination : []}
+            usageStations={usageSuggestions.stations}
             quickSuggestionsLeavingIdle={usageSuggestionsLeaving}
             onQuickSuggestionSelect={applyDestinationUsageSuggestion}
             reserveHelperSpace={reserveIdleHelperSpace && !mobilePresentation}
@@ -975,6 +977,22 @@ function SearchModeControls({
    panel stays inside the window, 12px from its edge. */
 const SUGGESTION_PANEL_MIN_WIDTH = 288
 const SUGGESTION_PANEL_EDGE = 12
+const NO_STATIONS: ReadonlyMap<string, LocationSuggestion> = new Map()
+
+/* A row of the panel: its id, the code, and the station it names when that is
+   known. */
+interface SuggestionOptionItem {
+  id: string
+  code: string
+  station?: LocationSuggestion
+  active: boolean
+  select: () => void
+}
+
+interface SuggestionGroupItem {
+  heading: "Recientes" | "Frecuentes" | "Coincidencias"
+  options: SuggestionOptionItem[]
+}
 
 function LocationField({
   label,
@@ -993,6 +1011,7 @@ function LocationField({
   quickSuggestions = [],
   recentSuggestions = [],
   frequentSuggestions = [],
+  usageStations = NO_STATIONS,
   quickSuggestionsLeavingIdle = false,
   onQuickSuggestionSelect,
   reserveHelperSpace = false,
@@ -1018,6 +1037,8 @@ function LocationField({
   quickSuggestions?: string[]
   recentSuggestions?: string[]
   frequentSuggestions?: string[]
+  /** The station each history code names, where the server knows one. */
+  usageStations?: ReadonlyMap<string, LocationSuggestion>
   quickSuggestionsLeavingIdle?: boolean
   onQuickSuggestionSelect?: (code: string) => void | Promise<void>
   reserveHelperSpace?: boolean
@@ -1050,14 +1071,63 @@ function LocationField({
     && suggestions.length > 0
     && value.trim().length >= MIN_MATCH_QUERY
   const shouldShowListbox = shouldShowUsagePanel || shouldShowMatchesPanel
-  const activeOptionId = shouldShowUsagePanel
-    && usageActiveIndex >= 0
-    && usageOptions[usageActiveIndex]
-    ? `${listboxId}-usage-${usageActiveIndex}`
-    : activeIndex >= 0 && suggestions[activeIndex]
-      ? `${listboxId}-${activeIndex}`
-      : undefined
   const listboxTarget = typeof document === "undefined" ? null : document.body
+
+  /* A row taken from the sheet closes it, whichever state the row is from. */
+  const selectLocationSuggestion = (suggestion: LocationSuggestion) => {
+    if (mobilePresentation) setMobileSheetOpen(false)
+    onSelect(suggestion)
+  }
+
+  const selectUsageSuggestion = onQuickSuggestionSelect
+    ? (code: string) => {
+        if (mobilePresentation) setMobileSheetOpen(false)
+        return onQuickSuggestionSelect(code)
+      }
+    : undefined
+
+  /* 11 §2.1: one panel in both states — the history below two letters,
+     «Coincidencias» from two. Each group is a head with its count over the
+     same rows, and the keys stand at the foot of either. */
+  const groups: SuggestionGroupItem[] = (shouldShowUsagePanel
+    ? (["Recientes", "Frecuentes"] as const).map((heading) => ({
+        heading,
+        options: usageOptions.flatMap((option, index) => option.heading === heading
+          ? [{
+              id: `${listboxId}-usage-${index}`,
+              code: option.code,
+              station: usageStations.get(option.code),
+              active: index === usageActiveIndex,
+              select: () => void selectUsageSuggestion?.(option.code),
+            }]
+          : []),
+      }))
+    : shouldShowMatchesPanel
+      ? [{
+          heading: "Coincidencias" as const,
+          options: suggestions.map((suggestion, index) => ({
+            id: `${listboxId}-${index}`,
+            code: suggestion.code,
+            station: suggestion,
+            active: index === activeIndex,
+            select: () => selectLocationSuggestion(suggestion),
+          })),
+        }]
+      : []
+  ).filter((group) => group.options.length > 0)
+  const activeOption = groups.flatMap((group) => group.options).find((option) => option.active)
+  const activeOptionId = activeOption?.id
+
+  /* Rows outgrow the desk's panel, so the row the arrows reach is brought into
+     view, and out from under its group's head, which stays over its rows. */
+  useEffect(() => {
+    const option = activeOptionId ? document.getElementById(activeOptionId) : null
+    if (!option) return
+    option.scrollIntoView({ block: "nearest" })
+    const head = option.closest("section")?.querySelector(".fd-suggest-head")
+    const covered = head ? head.getBoundingClientRect().bottom - option.getBoundingClientRect().top : 0
+    if (covered > 0.5) option.closest("[role=listbox]")?.scrollBy({ top: -covered })
+  }, [activeOptionId])
 
   const handleLocationKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (mobilePresentation && event.key === "Escape") {
@@ -1075,7 +1145,13 @@ function LocationField({
       onChange("")
       return
     }
-    if (shouldShowUsagePanel && onQuickSuggestionSelect) {
+    /* `Enter` takes the row the arrows are on, as a click or a tap does. */
+    if (event.key === "Enter" && activeOption) {
+      event.preventDefault()
+      activeOption.select()
+      return
+    }
+    if (shouldShowUsagePanel) {
       if (event.key === "ArrowDown") {
         event.preventDefault()
         setUsageActiveIndex((current) => Math.min(current + 1, usageOptions.length - 1))
@@ -1086,12 +1162,6 @@ function LocationField({
         setUsageActiveIndex((current) => current <= 0
           ? usageOptions.length - 1
           : Math.min(current - 1, usageOptions.length - 1))
-        return
-      }
-      if (event.key === "Enter" && usageActiveIndex >= 0) {
-        event.preventDefault()
-        const selected = usageOptions[usageActiveIndex]
-        if (selected) void onQuickSuggestionSelect(selected.code)
         return
       }
     }
@@ -1142,93 +1212,37 @@ function LocationField({
     }
   }
 
-  const selectLocationSuggestion = (suggestion: LocationSuggestion) => {
-    if (mobilePresentation) setMobileSheetOpen(false)
-    onSelect(suggestion)
-  }
-
-  const selectUsageSuggestion = onQuickSuggestionSelect
-    ? (code: string) => {
-        if (mobilePresentation) setMobileSheetOpen(false)
-        return onQuickSuggestionSelect(code)
-      }
-    : undefined
-
-  const suggestionList = (
+  const suggestionList = groups.length > 0 ? (
     <>
-      {shouldShowUsagePanel ? (
-        <div id={listboxId} role="listbox" className="fd-scrollbar-hidden fd-suggest-scroll grid max-h-[288px] overflow-y-auto pb-1.5">
-          <LocationUsageSuggestionSection
-            fieldId={fieldId}
-            listboxId={listboxId}
-            heading="Recientes"
-            suggestions={recentSuggestions}
-            activeIndex={usageActiveIndex}
-            indexOffset={0}
-            onSelect={selectUsageSuggestion}
-          />
-          <LocationUsageSuggestionSection
-            fieldId={fieldId}
-            listboxId={listboxId}
-            heading="Frecuentes"
-            suggestions={frequentSuggestions}
-            activeIndex={usageActiveIndex}
-            indexOffset={recentSuggestions.length}
-            onSelect={selectUsageSuggestion}
-          />
-        </div>
-      ) : shouldShowMatchesPanel ? (
-        <>
-          <div className="fd-suggest-head">
-            <span className="fd-type-micro">Coincidencias</span>
-            <span className="fd-count text-muted-foreground">{suggestions.length}</span>
-          </div>
-          <div id={listboxId} role="listbox" className="fd-scrollbar-hidden fd-suggest-scroll grid max-h-[288px] overflow-y-auto px-1.5 pb-1.5">
-            {suggestions.map((suggestion, index) => (
-              <button
-                id={`${listboxId}-${index}`}
-                key={`${suggestion.code}-${index}`}
-                type="button"
-                role="option"
-                aria-selected={index === activeIndex}
-                className="fd-suggest-row"
-                onMouseDown={(event) => {
-                  event.preventDefault()
-                }}
-                onClick={() => selectLocationSuggestion(suggestion)}
-              >
-                <span className="grid place-items-center text-muted-foreground">
-                  <AppIcon name={suggestionLocationIcon(suggestion)} size={14} />
-                </span>
-                <span className="fd-suggest-code">{suggestion.code}</span>
-                <span className="grid min-w-0 gap-0.5">
-                  <span className="fd-suggest-city">{suggestionCityLabel(suggestion)}</span>
-                  <span className="fd-suggest-detail">{suggestionPlaceLabel(suggestion)}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        </>
-      ) : (
-        <p className="fd-suggest-empty">Escribe una ciudad o código IATA.</p>
-      )}
-
-      {!shouldShowUsagePanel && shouldShowMatchesPanel && (
-        <div className="fd-suggest-foot">
-          <KbdHint keys={<Kbd icon="enter" />} label="elegir" />
-          <KbdHint
-            keys={(
-              <span className="inline-flex gap-1">
-                <Kbd icon="arrowUp" />
-                <Kbd icon="arrowDown" />
-              </span>
-            )}
-            label="navegar"
-          />
-          <KbdHint keys={<Kbd>esc</Kbd>} label="cerrar" />
-        </div>
-      )}
+      <div id={listboxId} role="listbox" className="fd-scrollbar-hidden fd-suggest-scroll grid overflow-y-auto pb-1.5">
+        {groups.map((group) => (
+          <section key={group.heading} aria-label={group.heading}>
+            <div className="fd-suggest-head">
+              <span className="fd-type-micro">{group.heading}</span>
+              <span className="fd-count text-muted-foreground">{group.options.length}</span>
+            </div>
+            <div className="grid px-1.5">
+              {group.options.map((option) => <SuggestionOption key={`${option.id}:${option.code}`} {...option} />)}
+            </div>
+          </section>
+        ))}
+      </div>
+      <div className="fd-suggest-foot">
+        <KbdHint keys={<Kbd icon="enter" />} label="elegir" />
+        <KbdHint
+          keys={(
+            <span className="inline-flex gap-1">
+              <Kbd icon="arrowUp" />
+              <Kbd icon="arrowDown" />
+            </span>
+          )}
+          label="navegar"
+        />
+        <KbdHint keys={<Kbd>esc</Kbd>} label="cerrar" />
+      </div>
     </>
+  ) : (
+    <p className="fd-suggest-empty">Escribe una ciudad o código IATA.</p>
   )
 
   return (
@@ -1367,58 +1381,34 @@ function LocationField({
   )
 }
 
-function LocationUsageSuggestionSection({
-  fieldId,
-  listboxId,
-  heading,
-  suggestions,
-  activeIndex,
-  indexOffset,
-  onSelect,
-}: {
-  fieldId: string
-  listboxId: string
-  heading: "Recientes" | "Frecuentes"
-  suggestions: string[]
-  activeIndex: number
-  indexOffset: number
-  onSelect?: (code: string) => void | Promise<void>
-}) {
-  if (suggestions.length === 0 || !onSelect) {
-    return null
-  }
-
+/* The one row of the panel, a match or a station of the history: the type,
+   the code, and the city over its detail. A code nothing names is drawn
+   alone, never beside a guessed name. The mousedown is swallowed so the field
+   keeps the focus the row is chosen from. */
+function SuggestionOption({ id, code, station, active, select }: SuggestionOptionItem) {
   return (
-    <section aria-label={heading}>
-      <div className="fd-suggest-head">
-        <span className="fd-type-micro">{heading}</span>
-        <span className="fd-count text-muted-foreground">{suggestions.length}</span>
-      </div>
-      <div className="grid px-1.5">
-        {suggestions.map((code, index) => {
-          const optionIndex = indexOffset + index
-          return (
-          <button
-            id={`${listboxId}-usage-${optionIndex}`}
-            key={`${fieldId}-${heading}-${code}`}
-            type="button"
-            role="option"
-            aria-selected={optionIndex === activeIndex}
-            className="fd-suggest-row"
-            onMouseDown={(event) => {
-              event.preventDefault()
-            }}
-            onClick={() => void onSelect(code)}
-          >
-            <span className="grid place-items-center text-muted-foreground">
-              <AppIcon name="location" size={14} />
-            </span>
-            <span className="fd-suggest-code">{code}</span>
-          </button>
-          )
-        })}
-      </div>
-    </section>
+    <button
+      id={id}
+      type="button"
+      role="option"
+      aria-selected={active}
+      className="fd-suggest-row"
+      onMouseDown={(event) => {
+        event.preventDefault()
+      }}
+      onClick={select}
+    >
+      <span className="grid place-items-center text-muted-foreground">
+        <AppIcon name={suggestionLocationIcon(station)} size={14} />
+      </span>
+      <span className="fd-suggest-code">{code}</span>
+      {station && (
+        <span className="grid min-w-0 gap-0.5">
+          <span className="fd-suggest-city">{suggestionCityLabel(station)}</span>
+          <span className="fd-suggest-detail">{suggestionPlaceLabel(station)}</span>
+        </span>
+      )}
+    </button>
   )
 }
 
@@ -1503,9 +1493,9 @@ function suggestionCityLabel(suggestion: LocationSuggestion): string {
   return suggestionPlaceLabel(suggestion).split(",")[0]?.trim() || suggestion.code
 }
 
-function suggestionLocationIcon(suggestion: LocationSuggestion): AppIconName {
-  if (suggestion.type === "CITY") return "cityGroup"
-  if (suggestion.type === "AIRPORT") return "airport"
+function suggestionLocationIcon(suggestion?: LocationSuggestion): AppIconName {
+  if (suggestion?.type === "CITY") return "cityGroup"
+  if (suggestion?.type === "AIRPORT") return "airport"
   return "location"
 }
 

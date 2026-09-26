@@ -7,13 +7,18 @@ import { startedJob, waitForIdleCapacity, waitForResults } from "./support/flows
 import { defineSuite } from "./support/harness.ts";
 import type { OfferSpec } from "./support/fixtures.ts";
 import { day, eventually, providerSearches, stationLookups } from "./support/scenario.ts";
+import { adoptBrowserClientId, readBrowserClientId } from "./support/sessions.ts";
 import {
   announcement,
   detail,
+  isOnScreen,
   isUnclipped,
   notice,
   pastedQuotation,
   quotation,
+  readSuggestion,
+  readSuggestionCodes,
+  readSuggestions,
   results,
   searchForm,
   searchLink,
@@ -88,7 +93,7 @@ suite.test("a new tab offers this browser's recent stations and the desk's frequ
   await waitForResults(page, 4);
   await page.goto(`${stack.baseUrl}${searchLink({ mode: "exact", trip: "round-trip", origin: "AQP", destination: "CUZ", departure: day(41), return: day(45) })}`);
   await waitForResults(page, 2);
-  const clientSessionId = await page.evaluate(() => localStorage.getItem("fly-desk:client-session-id"));
+  const clientSessionId = await readBrowserClientId(page);
   assert.ok(clientSessionId);
   const sentWith = tracked.apiRequests
     .filter((request) => request.method === "POST" && new URL(request.url).pathname === "/api/search")
@@ -100,21 +105,21 @@ suite.test("a new tab offers this browser's recent stations and the desk's frequ
   const tab = await tracked.newPage();
   await tab.goto(stack.baseUrl);
   await searchForm.location(tab, "Origen").click();
-  const recent = searchForm.usageSection(tab, "Recientes");
-  const frequent = searchForm.usageSection(tab, "Frecuentes");
+  const recent = searchForm.suggestionGroup(tab, "Recientes");
+  const frequent = searchForm.suggestionGroup(tab, "Frecuentes");
   await recent.waitFor();
   await frequent.waitFor();
-  assert.deepEqual(await recent.getByRole("option").allInnerTexts(), ["AQP", "LIM"]);
-  assert.ok((await frequent.getByRole("option").allInnerTexts()).includes("AQP"), "the last station used is not among the frequent ones");
+  assert.deepEqual(await readSuggestionCodes(recent), ["AQP", "LIM"]);
+  assert.ok((await readSuggestionCodes(frequent)).includes("AQP"), "the last station used is not among the frequent ones");
 
   /* Another browser: the desk's ranking, nobody else's history. */
   const other = await scope.signedInPage("/");
   await searchForm.location(other.page, "Origen").click();
-  await searchForm.usageSection(other.page, "Frecuentes").waitFor();
-  assert.equal(await searchForm.usageSection(other.page, "Recientes").count(), 0, "another browser was shown this browser's history");
+  await searchForm.suggestionGroup(other.page, "Frecuentes").waitFor();
+  assert.equal(await searchForm.suggestionGroup(other.page, "Recientes").count(), 0, "another browser was shown this browser's history");
   assert.deepEqual(
-    await searchForm.usageSection(other.page, "Frecuentes").getByRole("option").allInnerTexts(),
-    await frequent.getByRole("option").allInnerTexts(),
+    await readSuggestionCodes(searchForm.suggestionGroup(other.page, "Frecuentes")),
+    await readSuggestionCodes(frequent),
   );
 });
 
@@ -158,6 +163,93 @@ suite.test("the history names its stations from the providers' answers the desk 
   assert.deepEqual(station("AYP"), { code: "AYP", city: "Ayacucho", country: "Perú", countryCode: "PE", label: "AYP - Ayacucho, Perú" });
   assert.equal(station("CHM"), undefined, "a code nothing names was given a name");
   assert.equal(station("LIM")?.city, "Lima");
+});
+
+suite.test("the history is drawn as the matches are, over the same keys, without asking a provider, and chosen from the keyboard", async (scope) => {
+  const { fake, stack } = scope;
+  const tracked = await scope.newContext({ signedIn: true });
+  const page = await tracked.newPage();
+  await page.goto(stack.baseUrl);
+  const clientSessionId = await eventually(async () => {
+    const id = await readBrowserClientId(page);
+    assert.ok(id, "the desk has not named this browser");
+    return id;
+  });
+
+  /* Two letters: the matches, under their head and over their keys. The
+     providers' answer is what the desk now knows about CUZ. */
+  const origin = searchForm.location(page, "Origen");
+  await origin.fill("cu");
+  const cuscoMatch = searchForm.suggestion(page, "CUZ");
+  await cuscoMatch.waitFor();
+  await searchForm.suggestionGroup(page, "Coincidencias").waitFor();
+  const cuscoAsMatch = await readSuggestion(cuscoMatch);
+  assert.equal(cuscoAsMatch, "CUZ Cusco Cusco, Perú");
+  assert.equal(await searchForm.suggestionKeys(page).count(), 3, "the matches lost their keys");
+
+  /* This browser searches from each origin; the next screen brings the history. */
+  const api = await scope.api();
+  for (const [index, code] of HISTORY_ORIGINS.entries()) {
+    await startSearch(api, searchPayloads.exact(code, "LIM", day(70 + index), undefined, { clientSessionId }));
+  }
+  await waitForIdleCapacity(api);
+  await page.reload();
+  await searchForm.submit(page).waitFor();
+  await tracked.apiSettled();
+  const lookupsBefore = stationLookups(fake).length;
+
+  /* The empty field opens its history: the row a match draws, the city and
+     country of the desk's own list, and a code alone. */
+  await origin.click();
+  const recent = searchForm.suggestionGroup(page, "Recientes");
+  await recent.waitFor();
+  assert.deepEqual(await readSuggestions(recent), ["CHM", "AYP Ayacucho Ayacucho, Perú", cuscoAsMatch]);
+  assert.equal(await origin.getAttribute("aria-controls"), await searchForm.suggestionList(page).getAttribute("id"));
+  const keys = await searchForm.suggestionKeys(page).all();
+  assert.equal(keys.length, 3, "the history has not the matches' keys");
+  for (const key of keys) {
+    assert.ok(await isUnclipped(key), `the history's foot cut «${await key.innerText()}»`);
+  }
+  await tracked.apiSettled();
+  assert.equal(stationLookups(fake).length, lookupsBefore, "opening the history asked a provider");
+
+  /* The arrows walk every row, down and back up, each brought into view and
+     out from under its head, and the field names the row it is on. */
+  const rows = searchForm.suggestionList(page).getByRole("option");
+  const count = await rows.count();
+  const walk = [...Array.from({ length: count }, (_, index) => index), ...Array.from({ length: count - 1 }, (_, index) => count - 2 - index)];
+  for (const [step, index] of walk.entries()) {
+    await page.keyboard.press(step < count ? "ArrowDown" : "ArrowUp");
+    const row = rows.nth(index);
+    await eventually(async () => assert.equal(await origin.getAttribute("aria-activedescendant"), await row.getAttribute("id")), { timeoutMs: 2_000 });
+    assert.equal(await searchForm.activeSuggestion(page).getAttribute("id"), await row.getAttribute("id"));
+    assert.ok(await isOnScreen(row), `row ${index + 1} of ${count} is out of view or covered`);
+  }
+
+  /* Enter takes the row the arrows are on: the third, CUZ. */
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await eventually(async () => assert.equal(await readSuggestion(searchForm.activeSuggestion(page)), cuscoAsMatch), { timeoutMs: 2_000 });
+  await page.keyboard.press("Enter");
+  await eventually(async () => assert.match(await origin.inputValue(), /^CUZ\b/));
+  await searchForm.suggestionList(page).waitFor({ state: "hidden" });
+
+  /* A page against a server from before the stations: the same rows, each code alone. */
+  const older = await scope.newContext({ signedIn: true });
+  await adoptBrowserClientId(older.context, clientSessionId);
+  const olderPage = await older.newPage();
+  await olderPage.route((url) => url.pathname === "/api/location-usage-suggestions", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json() as Record<string, unknown>;
+    delete body.stations;
+    await route.fulfill({ response, json: body });
+  });
+  await olderPage.goto(stack.baseUrl);
+  await searchForm.location(olderPage, "Origen").click();
+  const olderRecent = searchForm.suggestionGroup(olderPage, "Recientes");
+  await olderRecent.waitFor();
+  assert.deepEqual(await readSuggestions(olderRecent), [...HISTORY_ORIGINS].reverse());
+  assert.equal(await searchForm.suggestionKeys(olderPage).count(), 3);
 });
 
 suite.test("a domestic quote is priced in soles and ages while open, pasting it back searches only once confirmed, and copying the search says how it went", async (scope) => {
