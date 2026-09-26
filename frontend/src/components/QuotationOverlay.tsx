@@ -118,7 +118,7 @@ export function QuotationOverlay({
     }
   }, [requestClose])
 
-  const fareAge = fareAgeLabel(state.preparedAt, now)
+  const fareAge = fareAgePhrases(state.preparedAt, now)
 
   return createPortal(
     <div
@@ -171,7 +171,10 @@ export function QuotationOverlay({
         </div>
 
         <div className="fd-quote-footer">
-          <span className="fd-quote-age">{fareAge}</span>
+          <span className="fd-quote-age">
+            {fareAge.age && <><span className="fd-quote-age-phrase">{fareAge.age}</span>{" "}</>}
+            <span className="fd-quote-age-phrase">{fareAge.rule}</span>
+          </span>
           <div className="fd-quote-actions">
             {canOpenProvider && (
               <Button type="button" size="sm" variant="secondary" className="fd-quote-open" onClick={onOpenProvider}>
@@ -191,16 +194,20 @@ export function QuotationOverlay({
   )
 }
 
-/** The age of the fare and the rule for when to stop trusting it. */
-function fareAgeLabel(preparedAt: string | undefined, now: number): string {
-  const rule = `Vuelve a cotizar si la tarifa pasa de ${QUOTATION_FARE_STALE_MINUTES} min`
+/**
+ * The age of the fare and the rule for when to stop trusting it, one sentence
+ * in two phrases: the foot breaks it between them, after the «·», and never
+ * inside one.
+ */
+function fareAgePhrases(preparedAt: string | undefined, now: number): { age?: string; rule: string } {
   const prepared = preparedAt ? Date.parse(preparedAt) : Number.NaN
-  if (Number.isNaN(prepared)) return rule
+  if (Number.isNaN(prepared)) return { rule: `Vuelve a cotizar si la tarifa pasa de ${QUOTATION_FARE_STALE_MINUTES} min` }
 
   const minutes = Math.max(0, Math.round((now - prepared) / 60_000))
-  const age = minutes < 1 ? "hace menos de 1 min" : `hace ${minutes} min`
-
-  return minutes >= QUOTATION_FARE_STALE_MINUTES
-    ? `Tarifa preparada ${age} · vuelve a cotizar antes de pegar`
-    : `Tarifa preparada ${age} · vuelve a cotizar si pasa de ${QUOTATION_FARE_STALE_MINUTES} min`
+  return {
+    age: `Tarifa preparada ${minutes < 1 ? "hace menos de 1 min" : `hace ${minutes} min`} ·`,
+    rule: minutes >= QUOTATION_FARE_STALE_MINUTES
+      ? "vuelve a cotizar antes de pegar"
+      : `vuelve a cotizar si pasa de ${QUOTATION_FARE_STALE_MINUTES} min`,
+  }
 }

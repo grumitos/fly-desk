@@ -242,8 +242,8 @@ export const detail = {
 export const quotation = {
   dialog: (page: Page) => page.getByRole("dialog", { name: "Cotización lista para pegar" }),
   close: (page: Page) => page.getByRole("button", { name: "Cerrar la cotización" }),
-  /** «Tarifa preparada hace 2 min · …», at the dialog's foot. */
-  fareAge: (page: Page) => quotation.dialog(page).getByText(/^Tarifa preparada /),
+  /** «Tarifa preparada hace 2 min · vuelve a cotizar si pasa de 15 min», at the dialog's foot. */
+  fareAge: (page: Page) => quotation.dialog(page).getByText(/^Tarifa preparada .+ · vuelve a cotizar /),
 };
 
 /* ---- A pasted commercial quotation ---- */

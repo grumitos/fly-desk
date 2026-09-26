@@ -2036,12 +2036,17 @@
     background: var(--color-surface-sunken);
   }
 
+  /* The panel is 620 wide wherever it opens, and beside the actions one line
+     does not hold the sentence: it takes two, the buttons' own height, each
+     phrase whole, so the line breaks after the «·». */
   .fd-quote-age {
     min-width: 0;
-    overflow: hidden;
     color: var(--color-muted-foreground);
     font-size: var(--fd-text-meta);
-    text-overflow: ellipsis;
+    line-height: 1.3;
+  }
+
+  .fd-quote-age-phrase {
     white-space: nowrap;
   }
 
