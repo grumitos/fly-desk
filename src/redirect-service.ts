@@ -17,9 +17,8 @@ import { hasAcceptedApiAccessToken } from "./service-auth";
 import { COMPLETED_SEARCH_SESSION_TTL_MS } from "./session-store";
 import {
   hasValidRedirectSession,
+  isTrustedLocalRequest,
   isWebAuthEnabled,
-  shouldTrustLoopbackClient,
-  shouldTrustReverseProxyLoopbackClient,
 } from "./web-auth";
 
 const DEFAULT_REDIRECT_HOST = "127.0.0.1";
@@ -453,14 +452,6 @@ function redirect(location: string): Response {
   });
 }
 
-function hasForwardedClientMarker(request: Request): boolean {
-  return Boolean(
-    request.headers.get("x-forwarded-for")?.trim()
-      || request.headers.get("forwarded")?.trim()
-      || request.headers.get("x-real-ip")?.trim(),
-  );
-}
-
 function isLoopbackRemoteAddress(value: string | undefined): boolean {
   const normalized = String(value ?? "").trim().toLowerCase();
   return normalized === "127.0.0.1"
@@ -489,18 +480,6 @@ export function requestWithServerTrustHeaders(request: Request, server: Pick<Bun
     body: hasBody ? request.body : undefined,
     duplex: hasBody ? "half" : undefined,
   } as RequestInit & { duplex?: "half" });
-}
-
-function isTrustedLocalRequest(request: Request): boolean {
-  if (!shouldTrustLoopbackClient() || request.headers.get("x-flydesk-client-loopback") !== "1") {
-    return false;
-  }
-
-  if (hasForwardedClientMarker(request) && !shouldTrustReverseProxyLoopbackClient()) {
-    return false;
-  }
-
-  return true;
 }
 
 function isTrustedRedirectRequest(request: Request): boolean {

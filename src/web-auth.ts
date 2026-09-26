@@ -49,6 +49,25 @@ export function shouldTrustReverseProxyLoopbackClient(): boolean {
   return readEnv("FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK") === "1";
 }
 
+function hasForwardedClientMarker(request: Request): boolean {
+  return Boolean(
+    request.headers.get("x-forwarded-for")?.trim()
+      || request.headers.get("forwarded")?.trim()
+      || request.headers.get("x-real-ip")?.trim(),
+  );
+}
+
+/* A request trusted without a session because it came from this machine. Each
+   server stamps `x-flydesk-client-loopback` from the socket's own address; a
+   request a proxy relayed counts only when the reverse proxy is trusted too. */
+export function isTrustedLocalRequest(request: Request): boolean {
+  if (!shouldTrustLoopbackClient() || request.headers.get("x-flydesk-client-loopback") !== "1") {
+    return false;
+  }
+
+  return !hasForwardedClientMarker(request) || shouldTrustReverseProxyLoopbackClient();
+}
+
 function resolveWebSessionSecret(): string | undefined {
   return readEnv("FLY_DESK_WEB_SESSION_SECRET");
 }

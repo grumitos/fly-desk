@@ -81,14 +81,13 @@ import {
   createWebSessionCookie,
   getWebAuthConfigError,
   hasValidWebSession,
+  isTrustedLocalRequest,
   isWebAuthEnabled,
   loginPageLocation,
   renderLoginPage,
   renewWebSessionCookies,
   resolveSafeNextPath,
   resolveWebTheme,
-  shouldTrustReverseProxyLoopbackClient,
-  shouldTrustLoopbackClient,
   verifyWebPassword,
   WEB_SESSION_COOKIE_NAME,
 } from "./web-auth";
@@ -945,26 +944,6 @@ function mergeLocationSuggestions(
   }
 
   return [...deduped.values()];
-}
-
-function isTrustedLocalRequest(request: Request): boolean {
-  if (!shouldTrustLoopbackClient() || request.headers.get("x-flydesk-client-loopback") !== "1") {
-    return false;
-  }
-
-  if (hasForwardedClientMarker(request) && !shouldTrustReverseProxyLoopbackClient()) {
-    return false;
-  }
-
-  return true;
-}
-
-function hasForwardedClientMarker(request: Request): boolean {
-  return Boolean(
-    request.headers.get("x-forwarded-for")?.trim()
-      || request.headers.get("forwarded")?.trim()
-      || request.headers.get("x-real-ip")?.trim(),
-  );
 }
 
 function isTrustedApiRequest(request: Request): boolean {
