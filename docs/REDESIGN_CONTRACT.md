@@ -73,14 +73,14 @@ thresholds are re-derived from this rule, not nudged.
   losing digits. What none of them can use is split in four equal shares, one
   per boundary between two named columns, carried by the lane whose content
   aligns away from it. The mark's lane is not named by the header, so the gap
-  between a mark and its carrier does not grow. A 1440 desk is untouched by
-  any of this: its 37px of slack all go to the stops lane, which draws 112.
+  between a mark and its carrier does not grow. On a 1440 desk the whole 37px
+  of slack goes to the stops lane, which draws 112: the row the plate draws.
 - **The stacked card keeps the airport code in every mode at 360px.** Its legs
-  block is a label lane, 120 of schedule and 60 of duration, with three 4px
-  gaps. On a 360 phone that leaves the stops lane 96px in Exacto, where the
-  label drops its date to 22px because the search bar states it, and 62 in
-  Flexible and Migratorio, where the label keeps its date at 56 because
-  varying the date is what those modes are for. Both clear «1 esc · BOG» (54)
+  block is a label lane, 120 of schedule, 60 of duration and the stops lane,
+  with three 4px gaps. On a 360 phone that leaves the stops lane 96px in
+  Exacto, where the label drops its date to 22px because the search bar
+  states it, and 62 in Flexible and Migratorio, where the label keeps its date
+  at 56 because varying the date is what those modes are for. Both clear «1 esc · BOG» (54)
   and the widest three-letter code (59.9). Pinned by «at 360 wide every mode
   fits, keeps its search action in reach, and names the stopover airport»
   (`test/e2e/mobile.e2e.ts`).
@@ -96,7 +96,7 @@ table draws them as desk-versus-phone shapes.
 | 05 §7 offers «copiar sin tarifa confirmada» as an exit from a failed quotation | A fare the provider does not confirm is never shown or copied; the failure stays in the panel with «Reintentar» (11 §4) | A fare that turns out not to exist reaches a customer as a price the agency has to honour. |
 | 02 §2 stacks the row at a list width of 660 | 787 | The manual's sum omits the row's padding; 787 is the same sum with this row's numbers (above). |
 | 02 §1 gives the detail a third column from 1100 and a side sheet below | The form reflows at 1100; the detail becomes a column only at 824px of list (a 1440 shell) and is the same side sheet, with the same scrim, until then | 1100 is where the form stops fitting its six minimums in one row. A detail column from 1100 to 1436 would leave the list 482–818, under the row's own threshold, so every result on a 1366 laptop would wear the phone anatomy inside a three-column desk («cada resultado colapsa el ancho», as reported). The filter column never yields. |
-| 8c gives «who flies» a 186px lane, and the baggage a track of its own beside the legs | The «who flies» lane is 142 at its floor; baggage is a fixed 36 lane | **Owner-decided, against the plates.** «No solucionaste el cambio erróneo de ancho de celda de resultado, compara con commits viejos y arréglalo … el correcto es el que tenía en el commit de rediseño.» The legs are the row's one elastic track, so every fixed pixel a lane gains comes out of the result cell. The lane holds one line of carrier name, and the widest the catalogue draws, «Aerolíneas Argentinas», measures 141 against the loaded face: 142 holds it unbroken, where the maqueta's 132 clips it. The baggage lane is 36 so the header above it can carry «Eq.». |
+| 8c gives «who flies» a 186px lane, and the baggage a track of its own beside the legs | The «who flies» lane is 142 at its floor; baggage is a fixed 36 lane | **Owner-decided, against the plates.** «No solucionaste el cambio erróneo de ancho de celda de resultado, compara con commits viejos y arréglalo … el correcto es el que tenía en el commit de rediseño.» Every pixel a fixed lane gains comes out of the legs track, the row's result cell. The «who flies» lane holds one line of carrier name, and the widest the catalogue draws, «Aerolíneas Argentinas», measures 141 against the loaded face: 142 holds it unbroken, where the maqueta's 132 clips it. The baggage lane is 36 so the header above it can carry «Eq.». |
 | The plates draw the row once, at 1440, with one elastic lane | Three lanes grow with the desk and the rest of the slack is spacing (above) | The plate is under-specified beyond 1440: with one elastic lane, a 1920 desk would draw 418px of content, then 357px of nothing inside the stops lane, then the baggage, the price and the provider. |
 | The plate sets the stacked schedule sub-grid gap at 6 | 4 | With Plex Mono 700 loaded, each time measures 42px. Two times, the 11px arrow lane, the 13px day lane and three 4px gaps are exactly the 120 the schedule lane has; at 6 the block needs 126. |
 | The plate sets the stacked leg lanes' gap at 8 | 4 | At 8 the stops lane falls under the 54 «1 esc · BOG» needs, and the airport code is the first thing the ellipsis eats. |
@@ -147,7 +147,7 @@ come back in the active screen, where it would compete with the results.
 
 ## Rules for the results column
 
-**The list and its skeleton are one measurement.** 4a asks for «never more
+**The list and its skeleton are one measurement.** Plate 4a asks for «never more
 rows than the real list». The count of rows the column holds is taken once, by
 the hook that opens the list (`useResultsColumnCapacity`), and the skeleton
 draws that count; it has no default. In a partial search the skeleton fills
