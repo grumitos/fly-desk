@@ -64,10 +64,11 @@
   --radius-lg: var(--fd-radius-10);
   --radius-xl: var(--fd-radius-12);
 
-  /* The faces and their metric-matched fallbacks are declared in index.html
-     by scripts/build-frontend.ts. */
+  /* One family for the whole product, figures included (tabular where they
+     line up). The face and its metric-matched fallback are declared in
+     index.html by scripts/build-frontend.ts. Tailwind's own `font-mono` stack
+     is left only to the raw diagnostic log. */
   --font-sans: "Inter", "Inter Fallback", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", "IBM Plex Mono Fallback", "IBM Plex Mono Fallback Alt", ui-monospace, monospace;
 }
 
 @layer base {
@@ -93,6 +94,17 @@
   select,
   textarea {
     font: inherit;
+  }
+
+  /* The product has one family: a quotation's text and a key are set in it
+     too, not in the monospace the browser and Tailwind give these elements. */
+  pre,
+  kbd,
+  code,
+  samp {
+    font-family: inherit;
+    font-feature-settings: inherit;
+    font-variation-settings: inherit;
   }
 
   button {
@@ -277,44 +289,42 @@
     opacity: var(--fd-disabled-opacity);
   }
 
-  /* The shared search capacity: the month cards' 6px bar in a 32px cell, on a
-     track drawn in the edge colour (the top bar's ground would swallow the
-     month bar's), a neutral fill for the searches in progress and the accent
+  /* The shared search capacity: a gauge and a tabular «3/7» in a cell of the
+     capsules' height and radius. Muted like the capsules' glyphs while nothing
+     runs, in ink while a search runs, and in the «En espera» line's colours
      while one waits. Blank, with its box kept, while it cannot be read. */
   .fd-capacity {
-    display: grid;
-    width: var(--fd-control-standard);
+    display: inline-flex;
     height: var(--fd-control-standard);
-    place-items: center;
+    align-items: center;
+    gap: 6px;
+    padding-inline: 8px;
     border-radius: var(--fd-radius-10);
+    color: var(--color-muted-foreground);
+    cursor: default;
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-label);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    white-space: nowrap;
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      box-shadow var(--fd-dur-tacto) var(--fd-ease-tacto),
+      color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-capacity[data-state="busy"] {
+    color: var(--color-foreground);
+  }
+
+  .fd-capacity[data-state="waiting"] {
+    background-color: var(--color-warning-soft);
+    box-shadow: inset 0 0 0 1px var(--color-warning-border);
+    color: var(--color-warning-soft-foreground);
   }
 
   .fd-capacity[data-state="unknown"] {
     visibility: hidden;
-  }
-
-  .fd-capacity-track {
-    display: block;
-    width: 24px;
-    height: 6px;
-    overflow: hidden;
-    border-radius: 999px;
-    background: var(--color-border);
-  }
-
-  .fd-capacity-fill {
-    display: block;
-    width: calc(var(--fd-capacity-share, 0) * 100%);
-    height: 100%;
-    border-radius: 999px;
-    background: var(--color-placeholder);
-    transition:
-      width var(--fd-dur-estructura) var(--fd-ease-estructura),
-      background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
-  }
-
-  .fd-capacity[data-state="waiting"] .fd-capacity-fill {
-    background: var(--color-warning);
   }
 
   .fd-search-stage {
@@ -759,7 +769,7 @@
     white-space: nowrap;
   }
 
-  .fd-mobile-search-trip .fd-mono {
+  .fd-mobile-search-trip .fd-tabular {
     font-weight: var(--fd-weight-label);
   }
 
@@ -782,7 +792,6 @@
   }
 
   .fd-mobile-search-route > span {
-    font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
 
@@ -793,7 +802,7 @@
     line-height: 1.3;
   }
 
-  .fd-mobile-search-meta .fd-mono {
+  .fd-mobile-search-meta .fd-tabular {
     font-weight: var(--fd-weight-label);
   }
 
@@ -972,6 +981,19 @@
     border: 1px solid var(--color-input);
     background-color: var(--color-secondary);
     color: var(--color-foreground);
+  }
+
+  /* The capacity takes the loose buttons' box beside them. */
+  .fd-capacity {
+    height: var(--fd-control-touch-sm);
+    border: 1px solid var(--color-input);
+    background-color: var(--color-secondary);
+  }
+
+  .fd-capacity[data-state="waiting"] {
+    border-color: var(--color-warning-border);
+    background-color: var(--color-warning-soft);
+    box-shadow: none;
   }
 
   .fd-segmented {
@@ -1758,8 +1780,7 @@
   margin: 0;
   padding: 0 14px 14px;
   color: var(--color-secondary-foreground);
-  font-family: var(--font-mono);
-  font-size: var(--fd-text-mono-meta);
+  font-size: var(--fd-text-figure-meta);
   line-height: 1.65;
   scrollbar-width: none;
   white-space: pre-wrap;
@@ -1927,10 +1948,10 @@
 
 .fd-sheet-meta {
   color: var(--color-muted-foreground);
-  font-family: var(--font-mono);
-  font-size: var(--fd-text-mono-meta);
+  font-size: var(--fd-text-figure-meta);
   font-weight: var(--fd-weight-title);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .fd-sheet--side .fd-sheet-header {

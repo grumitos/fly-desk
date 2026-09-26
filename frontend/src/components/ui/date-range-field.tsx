@@ -428,7 +428,7 @@ function RangeSummary({
         )}
       </span>
       {nights !== undefined && (
-        <span className="fd-status-pill fd-mono">
+        <span className="fd-status-pill fd-tabular">
           {nights} {nights === 1 ? "noche" : "noches"}
         </span>
       )}

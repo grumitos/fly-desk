@@ -41,6 +41,7 @@ import {
   searchForm,
   searchLink,
   signInThroughGate,
+  textFontFamilies,
   topBar,
 } from "./support/ui.ts";
 
@@ -182,6 +183,8 @@ suite.test("a shared round-trip link survives the sign-in gate and carries the s
   await detail.quote(offerPanel).click();
   const quoteDialog = quotation.dialog(page);
   await quoteDialog.waitFor();
+  /* The list, the offer and the quotation set words and figures in one family. */
+  assert.deepEqual((await textFontFamilies(page)).filter((family) => !family.startsWith("Inter")), [], "text set outside Inter");
   assert.equal(fake.requests("cbplus.search").length, cbplusBefore + 1, "the quotation revalidated the fare with the provider");
   const revalidation = fake.requests("cbplus.search").at(-1)!;
   assert.equal(revalidation.query?.departureDate, departure);

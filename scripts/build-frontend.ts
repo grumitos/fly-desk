@@ -60,39 +60,21 @@ type WebFont = {
   source: string;
   range: string;
   /** Preloaded because the first screen cannot be drawn without it. */
-  preload?: "sans" | "mono";
+  preload?: "sans";
 };
 
+/* One family, Inter, for text and figures alike. */
 const FONT_FACES: WebFont[] = [
   { family: "Inter", weight: "100 900", source: "@fontsource-variable/inter/files/inter-latin-wght-normal.woff2", range: LATIN, preload: "sans" },
   { family: "Inter", weight: "100 900", source: "@fontsource-variable/inter/files/inter-latin-ext-wght-normal.woff2", range: LATIN_EXT },
-  ...(["400", "600", "700"] as const).flatMap((weight): WebFont[] => [
-    {
-      family: "IBM Plex Mono",
-      weight,
-      source: `@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-${weight}-normal.woff2`,
-      range: LATIN,
-      preload: weight === "600" ? "mono" : undefined,
-    },
-    {
-      family: "IBM Plex Mono",
-      weight,
-      source: `@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-ext-${weight}-normal.woff2`,
-      range: LATIN_EXT,
-    },
-  ]),
 ];
 
-/* Local faces sized to the web fonts' advance and vertical metrics (measured in
-   Chromium), so the swap moves text as little as possible. Arial and Consolas
-   cover Windows; Courier New and Menlo are the last resort for figures. */
+/* Local faces sized to the web font's advance and vertical metrics (measured in
+   Chromium), so the swap moves text as little as possible. Arial covers
+   Windows. */
 const FALLBACK_FACES = [
   `@font-face{font-family:"Inter Fallback";font-weight:100 500;src:local("Arial"),local("ArialMT");size-adjust:103.95%;ascent-override:93.19%;descent-override:23.2%;line-gap-override:0%}`,
   `@font-face{font-family:"Inter Fallback";font-weight:600 900;src:local("Arial Bold"),local("Arial-BoldMT");size-adjust:100.26%;ascent-override:96.62%;descent-override:24.06%;line-gap-override:0%}`,
-  `@font-face{font-family:"IBM Plex Mono Fallback";font-weight:100 500;src:local("Consolas");size-adjust:109.13%;ascent-override:93.93%;descent-override:25.2%;line-gap-override:0%}`,
-  `@font-face{font-family:"IBM Plex Mono Fallback";font-weight:600 900;src:local("Consolas Bold"),local("Consolas-Bold");size-adjust:109.13%;ascent-override:93.93%;descent-override:25.2%;line-gap-override:0%}`,
-  `@font-face{font-family:"IBM Plex Mono Fallback Alt";font-weight:100 500;src:local("Menlo"),local("Courier New");size-adjust:100%;ascent-override:102.5%;descent-override:27.5%;line-gap-override:0%}`,
-  `@font-face{font-family:"IBM Plex Mono Fallback Alt";font-weight:600 900;src:local("Menlo Bold"),local("Courier New Bold");size-adjust:100%;ascent-override:102.5%;descent-override:27.5%;line-gap-override:0%}`,
 ];
 
 function emitFont(source: string): string {

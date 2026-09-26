@@ -79,7 +79,7 @@ export const topBar = {
   themeToggle: (page: Page) => page.getByRole("banner").getByRole("button", { name: "Cambiar tema" }),
   copyConfig: (page: Page) => page.getByRole("banner").getByRole("button", { name: "Copiar configuración" }),
   pasteConfig: (page: Page) => page.getByRole("button", { name: "Pegar configuración" }),
-  /** The shared search capacity: a meter with no text of its own, named in Spanish. */
+  /** The shared search capacity: a meter named in Spanish that shows the cupos in use, «4/7». */
   capacity: (page: Page) => page.getByRole("meter", { name: "Capacidad de búsqueda" }),
 };
 
@@ -106,6 +106,8 @@ export const searchForm = {
   /** A match in the suggestions, named «LIM Lima Lima, Perú». */
   suggestion: (page: Page, code: string) => page.getByRole("option", { name: new RegExp(`^${escapeRegExp(code)}\\b`) }),
   suggestions: (page: Page) => page.getByRole("option"),
+  /** The keys at the foot of the desk's matches: «elegir», «navegar», «esc cerrar». */
+  suggestionKeys: (page: Page) => page.getByText(/^(elegir|navegar|esc\s*cerrar)$/),
   /** The «Recientes» / «Frecuentes» sections of the usage panel. */
   usageSection: (page: Page, heading: "Recientes" | "Frecuentes") => page.getByRole("region", { name: heading, exact: true }),
   departureHalf: (page: Page) => page.getByRole("button", { name: /^Salida( desde)?:/ }),
@@ -388,6 +390,18 @@ export async function scrollerOffset(locator: Locator): Promise<number> {
       if ((overflow === "auto" || overflow === "scroll") && ancestor.scrollHeight > ancestor.clientHeight) return ancestor.scrollTop;
     }
     return document.scrollingElement?.scrollTop ?? 0;
+  });
+}
+
+/** The font families the page sets its visible text in, one entry per family. */
+export async function textFontFamilies(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const families = new Set<string>();
+    for (const element of document.body.querySelectorAll("*")) {
+      const holdsText = [...element.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
+      if (holdsText && element.checkVisibility()) families.add(window.getComputedStyle(element).fontFamily);
+    }
+    return [...families];
   });
 }
 

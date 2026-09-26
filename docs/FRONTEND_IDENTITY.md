@@ -36,10 +36,10 @@ comes from Claude's light and dark palettes.
 | `primary` / `primary-foreground` | `#d97757` / `#ffffff` | same | The primary action, checked controls, the selection edge |
 | `primary-hover` | `#c36b4e` | same | A primary button under the pointer |
 | `primary-badge` | `#ffffff33` | same | A count on a primary fill |
-| `warning` / `destructive` (+ `-foreground`) | `#d97757` / `#ffffff` | same | The accent in its warning and error roles: an invalid field's edge and message, the stop button under the pointer, a warning glyph, the capacity meter while a search waits |
-| `warning-soft` / `warning-soft-foreground` | `#d977571a` / `#6f321f` | `#d9775726` / `#f2c3b3` | The notice line's ground and text |
-| `warning-border` / `destructive-border` | `#d9775761` / `#d9775780` | same | The notice's edge for a warning, and the heavier one for an error |
-| `border` / `input` | `#1f1f1e26` | `#e2e1da26` | Dividers and control edges, the capacity meter's track |
+| `warning` / `destructive` (+ `-foreground`) | `#d97757` / `#ffffff` | same | The accent in its warning and error roles: an invalid field's edge and message, the stop button under the pointer, a warning glyph |
+| `warning-soft` / `warning-soft-foreground` | `#d977571a` / `#6f321f` | `#d9775726` / `#f2c3b3` | The notice line's ground and text, and the capacity meter's while a search waits |
+| `warning-border` / `destructive-border` | `#d9775761` / `#d9775780` | same | The notice's edge for a warning (and the waiting capacity meter's), and the heavier one for an error |
+| `border` / `input` | `#1f1f1e26` | `#e2e1da26` | Dividers and control edges |
 | `rule` | `#1f1f1e40` | `#e2e1da40` | The heavier line under the column headings |
 | `focus` | `#d977578c` | same | The keyboard focus ring |
 | `glow` | `#d977572e` | same | The glow around a focused or open field |
@@ -78,19 +78,19 @@ because the build cannot keep a derived colour theme-aware.
 
 ## Typography
 
-- Sans: `Inter`, the variable face (100–900), self-hosted in its Latin and
-  Latin Extended subsets, the Latin one preloaded. Its fallback, `Inter Fallback`, is
-  Arial sized to Inter's metrics so the swap barely moves text.
-- Mono: `IBM Plex Mono` at 400, 600 and 700, self-hosted, 600 preloaded, with
-  Consolas and then Menlo or Courier New sized to its metrics as fallbacks.
-  Plex Mono stops at 700, so no figure is heavier.
-- Figures are mono and tabular: prices, times, dates, durations, codes and
-  counters. A date and a duration are figures.
+- One family: `Inter`, the variable face (100–900), self-hosted in its Latin
+  and Latin Extended subsets, the Latin one preloaded. Its fallback, `Inter
+  Fallback`, is Arial sized to Inter's metrics so the swap barely moves text.
+  No monospace face ships; only the hidden diagnostic log (Ctrl+Shift+L) sets
+  its raw lines in the system's.
+- Figures are Inter with tabular figures wherever they line up or change in
+  place: prices, times, dates, durations, calendar days and counters. A date
+  and a duration are figures. Station codes are Inter too.
 - One job per size: 22 display (the migratory hero price), 17 sheet (sheet
   titles, the detail price), 16 card (card titles, the list price, phone
   inputs), 15 action (primary actions, station codes), 14 body (form values,
   names, long copy), 13 base (buttons, chips, rows), 12 meta (metadata,
-  subtitles, counters), 11 mono meta (schedules, specs), 11 label, 10 micro
+  subtitles, counters), 11 figure meta (schedules, durations, specs), 11 label, 10 micro
   (secondary figures and footnotes).
 - Three weights: 400 for values, 600 for labels, 700 for titles and figures.
 - Labels are sentence case, normal tracking, muted, 11/600 (`.fd-type-micro`):
@@ -131,7 +131,7 @@ because the build cannot keep a derived colour theme-aware.
 - Filters: a 248px column on a desk and tablet, a sheet on a phone, with visible selected states and «Limpiar».
 - The result row: a table row on a desk — the carrier's mark, «who flies», the legs, baggage, price and provider — under a column header whose four sortable columns (Horario, Duración, Escalas, Precio) are the order control. Below 787px of list the row becomes the stacked phone card.
 - The detail: the selected offer and its quotation, in flat data groups under a hero and an action bar; the third column of a wide desk, a side sheet on a narrower desk or tablet, a bottom sheet on a phone. With nothing selected it says so in one quiet line, `<p class="fd-detail-empty">` «Selecciona una oferta para ver su detalle.»
-- The capacity meter: the capacity the two agents share, a 24×6 bar in the month cards' geometry inside a 32px cell, left of the capsules. Its `placeholder` fill on a `border` track is the share the searches in progress hold, and it turns `warning` while a search waits for room. It has no text: it is a `meter` named «Capacidad de búsqueda» whose value says the share and the searches in words, with a tooltip for the pointer. It is blank, its box kept, while the capacity cannot be read.
+- The capacity meter: the capacity the two agents share, left of the capsules, read like the rest of the title bar: a gauge glyph and a tabular «3/7», the cupos the searches in progress hold out of the most that can run, in a cell of the capsules' height and radius (on a phone, the loose buttons' bordered box). It is `muted-foreground` while nothing runs and `foreground` while a search runs; while a search waits for a cupo it takes the clock glyph and the «En espera» line's colours (`warning-soft`, `warning-soft-foreground`, `warning-border`). It is a `meter` named «Capacidad de búsqueda» whose value says the cupos and the searches in words («4 de 7 cupos en uso · 2 búsquedas en curso · 1 en espera»), which its tooltip repeats. It never says which search holds how many cupos. It is blank, its box kept, while the capacity cannot be read.
 - The provider rail: «Buscando en» and the providers this deployment searches, at the foot of the idle screen, with no health state. A provider that fails a search is reported in the notice line, never with its own words.
 - The notice line: one line, dismissible, above the results (see Copy).
 - Primitives: `.fd-btn` (primary, secondary and ghost; chip, small, medium, extra-large and icon sizes), `.fd-segmented`, `.fd-popover`, `.fd-checkbox`, `.fd-switch`, `.fd-tooltip`, `.fd-key`, and the `Sheet` component in bottom, side and modal placements.

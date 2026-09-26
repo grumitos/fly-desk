@@ -96,7 +96,6 @@
     border-radius: var(--fd-radius-10);
     background: var(--color-card);
     color: var(--color-foreground);
-    font-family: var(--font-mono);
     font-size: var(--fd-text-meta);
     font-weight: var(--fd-weight-label);
     transition:
@@ -141,7 +140,6 @@
 
   .fd-policy-line b {
     color: var(--color-foreground);
-    font-family: var(--font-mono);
     font-weight: var(--fd-weight-label);
   }
 
@@ -220,20 +218,19 @@
     }
   }
 
-  /* ---- counters: mono, tabular, 700 ---- */
+  /* ---- counters: tabular, 700 ---- */
 
   .fd-count,
   .fd-panel-count,
   .fd-airline-row-count,
   .fd-status-pill-count,
   .fd-filter-strip-count {
-    font-family: var(--font-mono);
     font-weight: var(--fd-weight-title);
     font-variant-numeric: tabular-nums;
   }
 
-  /* In a monospace `2ch` is two digits at any size, so a count does not jump
-     between 9 and 10. */
+  /* Tabular figures share one advance, so `2ch` holds two digits at any size
+     and a count does not jump between 9 and 10. */
   .fd-count {
     display: inline-block;
     min-width: 2ch;
@@ -340,8 +337,7 @@
 
   .fd-airline-total {
     color: var(--color-muted-foreground);
-    font-family: var(--font-mono);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-figure-meta);
     font-weight: var(--fd-weight-label);
     font-variant-numeric: tabular-nums;
   }
@@ -388,7 +384,7 @@
     width: 32px;
     flex-shrink: 0;
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-figure-meta);
     text-align: right;
   }
 
@@ -511,7 +507,6 @@
   }
 
   .fd-suggest-code {
-    font-family: var(--font-mono);
     font-size: var(--fd-text-base);
     font-weight: var(--fd-weight-title);
   }
@@ -625,7 +620,6 @@
     display: grid;
     min-width: 28px;
     place-items: center;
-    font-family: var(--font-mono);
     font-size: var(--fd-text-action);
     font-weight: var(--fd-weight-title);
     font-variant-numeric: tabular-nums;
@@ -729,7 +723,6 @@
 
   .fd-daterange-half .fd-field-value:not(.fd-field-value-placeholder),
   .fd-monthrange-value:not(.fd-field-value-placeholder) {
-    font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
 
@@ -924,7 +917,6 @@
     align-items: center;
     justify-content: center;
     border-radius: var(--fd-radius-8);
-    font-family: var(--font-mono);
     font-size: var(--fd-text-base);
     font-variant-numeric: tabular-nums;
     font-weight: var(--fd-weight-label);
@@ -1127,9 +1119,9 @@
     place-items: center;
     padding: 0 5px;
     border-radius: var(--fd-radius-6);
-    font-family: var(--font-mono);
     font-size: var(--fd-text-micro);
     font-weight: var(--fd-weight-label);
+    font-variant-numeric: tabular-nums;
   }
 
   .fd-cal-popover[data-layout="continuous"] {
@@ -1249,7 +1241,6 @@
   }
 
   .fd-detail-price {
-    font-family: var(--font-mono);
     font-size: var(--fd-text-sheet);
     font-weight: var(--fd-weight-title);
     font-variant-numeric: tabular-nums;
@@ -1335,8 +1326,7 @@
 
   .fd-leg-summary {
     color: var(--color-muted-foreground);
-    font-family: var(--font-mono);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-figure-meta);
     font-weight: var(--fd-weight-label);
     font-variant-numeric: tabular-nums;
   }
@@ -1353,8 +1343,7 @@
 
   .fd-rail-time {
     color: var(--color-foreground);
-    font-family: var(--font-mono);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-figure-meta);
     font-weight: var(--fd-weight-title);
     font-variant-numeric: tabular-nums;
     line-height: var(--fd-rail-stop-line);
@@ -1456,8 +1445,7 @@
   }
 
   .fd-condition-value--figure {
-    font-family: var(--font-mono);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-figure-meta);
     font-weight: var(--fd-weight-title);
     font-variant-numeric: tabular-nums;
   }
@@ -2019,7 +2007,6 @@
   .fd-quote-text {
     margin: 0;
     color: var(--color-foreground);
-    font-family: var(--font-mono);
     font-size: var(--fd-text-meta);
     line-height: 1.55;
     white-space: pre-wrap;
@@ -2344,8 +2331,7 @@
 
   .fd-month-schedule {
     overflow: hidden;
-    font-family: var(--font-mono);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-figure-meta);
     font-weight: var(--fd-weight-label);
     font-variant-numeric: tabular-nums;
     line-height: 1.3;
@@ -2389,7 +2375,6 @@
   }
 
   .fd-month-alt-price {
-    font-family: var(--font-mono);
     font-size: var(--fd-text-meta);
     font-weight: var(--fd-weight-figure);
     font-variant-numeric: tabular-nums;
@@ -2432,7 +2417,6 @@
   }
 
   .fd-month-range {
-    font-family: var(--font-mono);
     font-size: var(--fd-text-base);
     font-weight: var(--fd-weight-figure);
     font-variant-numeric: tabular-nums;

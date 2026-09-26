@@ -11,14 +11,14 @@
     --fd-text-body: 14px; /* form values, names, long copy */
     --fd-text-base: 13px; /* buttons, chips, rows */
     --fd-text-meta: 12px; /* metadata, subtitles, counters */
-    --fd-text-mono-meta: 11px; /* mono metadata: schedules, specs */
+    --fd-text-figure-meta: 11px; /* figures in metadata: schedules, durations, specs */
     --fd-text-label: 11px; /* labels: fields, groups, columns, pills, badges */
     --fd-text-micro: 10px; /* secondary figures and footnotes */
 
     --fd-weight-value: 400;
     --fd-weight-label: 600;
     --fd-weight-title: 700;
-    /* IBM Plex Mono stops at 700; a heavier price would be synthesised. */
+    /* Prices and figures weigh what titles weigh. */
     --fd-weight-figure: 700;
 
     /* Control heights: desktop, then touch (34 / 40 / 46). */
@@ -116,7 +116,6 @@
   /* ---- type ---- */
 
   .fd-type-display {
-    font-family: var(--font-mono);
     font-size: var(--fd-text-display);
     font-weight: var(--fd-weight-figure);
     font-variant-numeric: tabular-nums;
@@ -144,9 +143,8 @@
     line-height: 1.2;
   }
 
-  /* Figures: mono and tabular; the surface supplies the weight. */
-  .fd-mono {
-    font-family: var(--font-mono);
+  /* Figures that change or line up: tabular; the surface supplies the weight. */
+  .fd-tabular {
     font-variant-numeric: tabular-nums;
   }
 
@@ -192,7 +190,6 @@
   }
 
   .fd-key-text {
-    font-family: var(--font-mono);
     font-size: var(--fd-text-micro);
     font-weight: var(--fd-weight-title);
     line-height: 1;

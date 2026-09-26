@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, type CSSProperties, type ReactNode } from "react"
+import { memo, useEffect, useState, type ReactNode } from "react"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -58,25 +58,25 @@ function ThemeToggle({ theme, setTheme }: { theme: Theme; setTheme: (theme: Them
   )
 }
 
-const percent = new Intl.NumberFormat("es-PE", { style: "percent", maximumFractionDigits: 0 })
-
-/* The occupancy the meter draws and says: the share of the capacity the
-   searches in progress hold, never the units a search costs. */
-function describeCapacity(capacity: SearchCapacity): { share: number; searches: string; text: string } {
-  const share = Math.min(1, capacity.activeUnits / capacity.capacityUnits)
+/* What the meter shows and says: the cupos the searches in progress hold, out
+   of the most that can run at once. A search holds one or more; the count
+   never says which search holds how many. */
+function describeCapacity(capacity: SearchCapacity): { used: number; total: number; text: string } {
+  const used = Math.min(capacity.activeUnits, capacity.capacityUnits)
   const running = capacity.activeSearches === 0
     ? "ninguna búsqueda en curso"
     : `${capacity.activeSearches} ${capacity.activeSearches === 1 ? "búsqueda" : "búsquedas"} en curso`
   const searches = capacity.queuedSearches > 0 ? `${running} · ${capacity.queuedSearches} en espera` : running
-  return { share, searches, text: `${percent.format(share)} ocupada · ${searches}` }
+  return { used, total: capacity.capacityUnits, text: `${used} de ${capacity.capacityUnits} cupos en uso · ${searches}` }
 }
 
 /*
- * The capacity the two agents share, as a bar in the month cards' geometry:
- * its fill is the searches in progress against the most that can run, and it
- * turns to the accent while a search waits for room. It has no text of its
- * own; its name, its value and its tooltip say it. It follows the runner as
- * the capacity changes and goes blank while it cannot be read.
+ * The capacity the two agents share, as the title bar reads everything else:
+ * a glyph and a tabular «3/7» in a cell of the capsules' height. It is muted
+ * while nothing runs and in ink while something does; while a search waits
+ * for a cupo it takes the clock and the colours of the «En espera» line. Its
+ * name, value and tooltip say it in words. It follows the runner as the
+ * capacity changes and goes blank, keeping its box, while it cannot be read.
  */
 function CapacityMeter() {
   const capacity = useSearchCapacity()
@@ -92,21 +92,19 @@ function CapacityMeter() {
           role="meter"
           aria-label="Capacidad de búsqueda"
           aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={reading ? Math.round(reading.share * 100) : undefined}
+          aria-valuemax={reading?.total}
+          aria-valuenow={reading?.used}
           aria-valuetext={reading?.text}
           aria-hidden={reading ? undefined : true}
           tabIndex={reading ? 0 : -1}
           data-state={state}
           className="fd-capacity fd-focus-ring"
-          style={{ "--fd-capacity-share": reading?.share ?? 0 } as CSSProperties}
         >
-          <span className="fd-capacity-track">
-            <span className="fd-capacity-fill" />
-          </span>
+          <AppIcon name={state === "waiting" ? "clock" : "capacity"} />
+          <span className="fd-capacity-count">{reading ? `${reading.used}/${reading.total}` : "0/0"}</span>
         </span>
       </TooltipTrigger>
-      {reading && <TooltipContent>{`Capacidad de búsqueda · ${reading.searches}`}</TooltipContent>}
+      {reading && <TooltipContent>{reading.text}</TooltipContent>}
     </Tooltip>
   )
 }

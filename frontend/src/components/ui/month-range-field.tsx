@@ -281,7 +281,7 @@ function MonthRangeSummary({
         )}
       </span>
       {span !== undefined && (
-        <span className="fd-status-pill fd-mono">
+        <span className="fd-status-pill fd-tabular">
           {span} {span === 1 ? "mes" : "meses"}
         </span>
       )}

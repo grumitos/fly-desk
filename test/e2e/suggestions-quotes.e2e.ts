@@ -47,6 +47,12 @@ suite.test("a city and its airports come back from both providers, typed by name
   const controls = await originField.getAttribute("aria-controls");
   assert.ok(controls, "an open field names no list of suggestions");
   assert.equal(await page.getByRole("listbox").getAttribute("id"), controls, "the field names a list that is not there");
+  /* The idle desk's field is narrower than the list, which keeps its keys whole. */
+  const keys = await searchForm.suggestionKeys(page).all();
+  assert.equal(keys.length, 3, "the suggestions lost a key at their foot");
+  for (const key of keys) {
+    assert.ok(await isUnclipped(key), `the suggestions' foot cut «${await key.innerText()}»`);
+  }
   const asked = fake.requests((request) => request.op === "agil.locations" || request.op === "cbplus.locations");
   assert.deepEqual([...new Set(asked.map((request) => request.op))].sort(), ["agil.locations", "cbplus.locations"]);
 

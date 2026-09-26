@@ -21,6 +21,7 @@ import {
   scrollerOffset,
   searchForm,
   searchLink,
+  textFontFamilies,
   topBar,
   watchOfferPanels,
   type SearchLink,
@@ -60,6 +61,8 @@ suite.test("on a phone the whole search runs through sheets, the back button clo
   await page.goto(stack.baseUrl);
   await searchForm.location(page, "Origen").waitFor();
   await assertNoHorizontalOverflow(page, "idle");
+  /* The frequent stations and the policy line are set in the one family too. */
+  assert.deepEqual((await textFontFamilies(page)).filter((family) => !family.startsWith("Inter")), [], "text set outside Inter");
   /* The phone's form is the first one built: no desk control is put up to be replaced. */
   assert.deepEqual(await removedControls(), [], "the phone built the desk's controls and then replaced them");
 

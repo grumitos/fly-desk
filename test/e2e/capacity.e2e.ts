@@ -227,10 +227,13 @@ suite.test("the top bar's meter follows the shared capacity, and a search that h
   const { fake, stack } = scope;
   const { tracked, page } = await scope.signedInPage("/");
   const meter = topBar.capacity(page);
-  const share = async () => Number(await meter.getAttribute("aria-valuenow"));
+  const used = async () => Number(await meter.getAttribute("aria-valuenow"));
+  const shown = async () => (await meter.innerText()).trim();
   const said = async () => (await meter.getAttribute("aria-valuetext")) ?? "";
-  await eventually(async () => assert.equal(await share(), 0));
-  assert.match(await said(), /^0\s?%\s?ocupada · ninguna búsqueda en curso$/);
+  await eventually(async () => assert.equal(await used(), 0));
+  assert.equal(await meter.getAttribute("aria-valuemax"), "7");
+  assert.match(await said(), /^0 de 7 cupos en uso · ninguna búsqueda en curso$/);
+  assert.equal(await shown(), "0/7");
 
   /* The other agent's two short ranges hold 4 of the 7 units. */
   const other = await scope.api();
@@ -239,11 +242,13 @@ suite.test("the top bar's meter follows the shared capacity, and a search that h
   for (const [index, route] of blockers.entries()) {
     await startSearch(other, searchPayloads.range(route.origin, route.destination, day(240 + index * 2), day(241 + index * 2)));
   }
-  await eventually(async () => assert.equal(await share(), 57), { message: "the meter followed the other agent's searches" });
-  assert.match(await said(), /^57\s?%\s?ocupada · 2 búsquedas en curso$/);
+  await eventually(async () => assert.equal(await used(), 4), { message: "the meter followed the other agent's searches" });
+  assert.match(await said(), /^4 de 7 cupos en uso · 2 búsquedas en curso$/);
+  assert.equal(await shown(), "4/7");
+  assert.equal(await meter.getAttribute("data-state"), "busy");
 
   /* This agent's range does not fit: one line says it waits, and the meter
-     turns to the accent. */
+     takes that line's colours. */
   const route = { origin: "LIM", destination: "SCL" };
   const held = holdRoute(fake, route);
   await page.goto(`${stack.baseUrl}${searchLink({ mode: "flexible", trip: "one-way", ...route, departureStart: day(250), departureEnd: day(254) })}`);
@@ -261,7 +266,7 @@ suite.test("the top bar's meter follows the shared capacity, and a search that h
   gates[0]!.release();
   await eventually(() => assert.ok(held.seen > 0, "the waiting range never started"));
   await notice.line(page).waitFor({ state: "detached" });
-  await eventually(async () => assert.match(await said(), /^57\s?%\s?ocupada · 2 búsquedas en curso$/));
+  await eventually(async () => assert.match(await said(), /^4 de 7 cupos en uso · 2 búsquedas en curso$/));
 
   /* A hidden tab stops reading, and reads at once when it is shown again. */
   const reads = () => tracked.apiRequests.filter((request) => new URL(request.url).pathname === "/api/search-capacity").length;
@@ -280,7 +285,7 @@ suite.test("the top bar's meter follows the shared capacity, and a search that h
   /* A capacity that cannot be read leaves the meter blank, and says nothing. */
   held.release();
   await waitForIdleCapacity(other);
-  await eventually(async () => assert.equal(await share(), 0));
+  await eventually(async () => assert.equal(await used(), 0));
   const capacityReads = (url: URL) => url.pathname === "/api/search-capacity";
   await tracked.context.route(capacityReads, (request) => request.fulfill({ status: 503, contentType: "application/json", body: "{}" }));
   const blip = holdRoute(fake, { origin: "LIM", destination: "CUZ" });
@@ -289,7 +294,7 @@ suite.test("the top bar's meter follows the shared capacity, and a search that h
   assert.equal(await notice.line(page).count(), 0, "an unreadable capacity was reported");
   await tracked.context.unroute(capacityReads);
   blip.release();
-  await eventually(async () => assert.equal(await share(), 0), { timeoutMs: 20_000, message: "the meter came back once the capacity could be read" });
+  await eventually(async () => assert.equal(await used(), 0), { timeoutMs: 20_000, message: "the meter came back once the capacity could be read" });
 });
 
 /* The unit's cgroup as the runner reads it (`src/unit-memory.ts`), written by

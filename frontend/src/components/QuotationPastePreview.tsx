@@ -39,7 +39,7 @@ export function QuotationPastePreview({
       <section className="fd-quotation-paste-source">
         <div className="fd-quotation-paste-section-head">
           <span className="fd-type-micro">Texto recibido</span>
-          <span className="fd-mono text-xs font-semibold text-muted-foreground">
+          <span className="fd-tabular text-xs font-semibold text-muted-foreground">
             {formatCount(lineCount)} {plural(lineCount, "línea")}
           </span>
         </div>

@@ -92,8 +92,7 @@
     border: 1px solid var(--color-border);
     border-radius: var(--fd-radius-8);
     background: var(--color-card);
-    font-family: var(--font-mono);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-figure-meta);
     font-weight: var(--fd-weight-figure);
   }
 
@@ -187,9 +186,9 @@
   }
 
   .fd-card__leg-date {
-    font-family: var(--font-mono);
     font-size: var(--fd-text-micro);
     font-weight: var(--fd-weight-title);
+    font-variant-numeric: tabular-nums;
   }
 
   .fd-card__leg-schedule {
@@ -199,7 +198,6 @@
   }
 
   .fd-card__leg-time {
-    font-family: var(--font-mono);
     font-size: var(--fd-text-base);
     font-weight: var(--fd-weight-title);
     font-variant-numeric: tabular-nums;
@@ -225,8 +223,7 @@
 
   .fd-card__leg-duration {
     color: var(--color-muted-foreground);
-    font-family: var(--font-mono);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-figure-meta);
     font-weight: var(--fd-weight-label);
     font-variant-numeric: tabular-nums;
     text-align: right;
@@ -238,7 +235,7 @@
     min-width: 0;
     overflow: hidden;
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-figure-meta);
     font-weight: var(--fd-weight-label);
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -283,7 +280,6 @@
   }
 
   .fd-card__price-figure {
-    font-family: var(--font-mono);
     font-size: var(--fd-text-card);
     font-weight: var(--fd-weight-figure);
     font-variant-numeric: tabular-nums;
@@ -324,7 +320,6 @@
     border: 1px solid var(--color-border);
     border-radius: var(--fd-radius-8);
     background: var(--color-card);
-    font-family: var(--font-mono);
     font-size: var(--fd-text-micro);
     font-weight: var(--fd-weight-figure);
   }
@@ -395,8 +390,7 @@
   }
 
   .fd-card__alt-time {
-    font-family: var(--font-mono);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-figure-meta);
     font-weight: var(--fd-weight-title);
     font-variant-numeric: tabular-nums;
   }

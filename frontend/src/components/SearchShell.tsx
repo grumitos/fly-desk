@@ -521,11 +521,11 @@ export const SearchShell = memo(function SearchShell({
             <span>{destCode || "Destino"}</span>
           </span>
           <span className="fd-mobile-search-meta">
-            <span className="fd-mono">{dateSummary || "Fechas"}</span>
+            <span className="fd-tabular">{dateSummary || "Fechas"}</span>
           </span>
         </span>
         <span className="fd-mobile-search-aside">
-          <span className="fd-mobile-search-trip"><span className="fd-mono">{passengerTotal}</span> {plural(passengerTotal, "pasajero")}</span>
+          <span className="fd-mobile-search-trip"><span className="fd-tabular">{passengerTotal}</span> {plural(passengerTotal, "pasajero")}</span>
           <span className="fd-mobile-search-trip">{modeLabel}</span>
         </span>
       </span>
@@ -576,9 +576,9 @@ export const SearchShell = memo(function SearchShell({
     >
       <FieldLabel>Pasajeros</FieldLabel>
       <AppIcon name="passengers" className="text-muted-foreground" />
-      {/* Figure in mono, noun in sans, on one JSX line so the space survives. */}
+      {/* Tabular figure, then the noun, on one JSX line so the space survives. */}
       <span className={SEARCH_FIELD_VALUE_CLASS}>
-        <span className="fd-mono">{passengerTotal}</span> {plural(passengerTotal, "pasajero")}
+        <span className="fd-tabular">{passengerTotal}</span> {plural(passengerTotal, "pasajero")}
       </span>
       <DisclosureIcon open={paxOpen} className="text-muted-foreground" />
     </button>
@@ -970,6 +970,12 @@ function SearchModeControls({
   )
 }
 
+/* The suggestions are never narrower than the passengers popover (288px): the
+   idle desk's fields are, and the keys at their foot would be cut. A wider
+   panel stays inside the window, 12px from its edge. */
+const SUGGESTION_PANEL_MIN_WIDTH = 288
+const SUGGESTION_PANEL_EDGE = 12
+
 function LocationField({
   label,
   value,
@@ -1099,12 +1105,13 @@ function LocationField({
       const rect = controlRef.current?.getBoundingClientRect() ?? fieldRef.current?.getBoundingClientRect()
       if (!rect) return
 
+      const width = Math.max(rect.width, SUGGESTION_PANEL_MIN_WIDTH)
       setListboxStyle({
-        left: rect.left,
+        left: Math.max(SUGGESTION_PANEL_EDGE, Math.min(rect.left, window.innerWidth - SUGGESTION_PANEL_EDGE - width)),
         maxHeight: Math.max(96, Math.min(288, window.innerHeight - rect.bottom - 12)),
         position: "fixed",
         top: rect.bottom + 4,
-        width: rect.width,
+        width,
       })
     }
 
@@ -1551,7 +1558,7 @@ function FlexibleOptionsBar({
         <ButtonGroupText className={cn("fd-stay-value px-1 text-center transition-colors duration-[var(--fd-dur-tacto)] ease-[var(--fd-ease-tacto)]", stayControlsDisabled ? "text-muted-foreground" : "text-foreground")}>
           {/* One inline run: as two flex items the figure and noun lose their space. */}
           <span>
-            <span className="fd-mono fd-stay-figure">{stayNights}</span> {plural(stayNights, "noche")}
+            <span className="fd-tabular fd-stay-figure">{stayNights}</span> {plural(stayNights, "noche")}
           </span>
         </ButtonGroupText>
         <Button
