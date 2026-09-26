@@ -68,8 +68,10 @@ because the build cannot keep a derived colour theme-aware.
   `primary-foreground`.
 - **Selection is a wash and an edge, never a fill.** A selected desk row wears
   `selected` and a 2px primary edge at its left; a selected phone card wears
-  the `border-active` border. Full orange fills are for primary actions and
-  checked controls only.
+  the `border-active` border. Full orange fills are for actions and chosen
+  values — the primary button, a checked control, the ends of a chosen range,
+  «Filtros» while filters are on, the cheapest month's bar — and never for a
+  passive highlight or a hover.
 - **Hover is laid over, never instead.** `hover` sits over a control's own
   fill (`--fd-hover-layer`), so it reads on any surface in both themes, and it
   exists only under `(hover: hover)`.
@@ -77,7 +79,7 @@ because the build cannot keep a derived colour theme-aware.
 ## Typography
 
 - Sans: `Inter`, the variable face (100–900), self-hosted in its Latin and
-  Latin Extended subsets and preloaded. Its fallback, `Inter Fallback`, is
+  Latin Extended subsets, the Latin one preloaded. Its fallback, `Inter Fallback`, is
   Arial sized to Inter's metrics so the swap barely moves text.
 - Mono: `IBM Plex Mono` at 400, 600 and 700, self-hosted, 600 preloaded, with
   Consolas and then Menlo or Courier New sized to its metrics as fallbacks.
@@ -112,8 +114,8 @@ because the build cannot keep a derived colour theme-aware.
   that union, so `bun run typecheck` refuses any other size.
 - One stacking ladder: 10 raised (sticky heads), 80 sheets, 120 modals, 130
   popovers (above the sheets and modals that open them), 140 tooltips.
-- Shadows only on what floats — keys, popovers, sheets — and on the phone's
-  result card; the dark theme redefines them in black.
+- Shadows are for popovers and sheets, the key caps of shortcuts, and the
+  phone's result card; the dark theme redefines them in black.
 - The desk workspace has 16px gutters and 10px between its columns; a phone at
   rest has 14px sides and uses the whole width once a search exists.
 
@@ -158,8 +160,9 @@ Keyboard focus must be visible, and visible controls must be reachable by tab un
 
 - Entering is opacity plus 6–8px along the axis it comes from; leaving is
   opacity alone, in about half the time. Durations and curves are tokens
-  (`--fd-dur-*`, `--fd-ease-*`), and the idle-to-active choreography reads its
-  cues (`--fd-cue-*`) from the same place as `lib/search-choreography.ts`.
+  (`--fd-dur-*`, `--fd-ease-*`), and the cues of the idle-to-active
+  choreography (`--fd-cue-*`) are read by the stylesheets and by the FLIPs in
+  `lib/search-choreography.ts` alike.
 - Every staggered entrance reads its position from one variable, `--i`: the
   filter chips, the migratory months and the skeleton rows set it inline, the
   first rows of the list take it from their position, and each reader uses
@@ -190,8 +193,8 @@ On every layout: no horizontal overflow; action groups wrap instead of shrinking
 ## Copy Rules
 
 - Spanish labels and statuses, sentence case.
-- Search states in words: «Buscando vuelos» while a search runs, «Parcial»
-  while a list is still growing, «N buscando» while a sweep has months out,
+- Search states in words: «Buscando vuelos» is announced while a search runs,
+  «Parcial» shows while a list is still growing, «N buscando» while a sweep has months out,
   «Actualizando» on a month still loading, «Detenida» after a stop. An idle
   desk shows no status.
 - The notice line names a provider in its display name and never quotes it:
