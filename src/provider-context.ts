@@ -925,7 +925,9 @@ export function resolveProviderId(providerId?: ProviderId): ProviderId {
  * The branded token lives an hour and is renewed outside the application. When
  * `CBPLUS_TOKEN_FILE` names a file, each process re-reads it whenever its
  * modification time or size changes, so a renewal reaches the search runner, its
- * workers and the redirect service without restarting them.
+ * workers and the redirect service without restarting them. The release
+ * declares this to the platform as `cbplus-token-file` in
+ * `deploy/release-capabilities`, a declaration that goes if this does.
  */
 const TOKEN_FILE_STAT_INTERVAL_MS = 1_000;
 let tokenFileCache: { path: string; checkedAtMs: number; signature: string; token: string } | undefined;

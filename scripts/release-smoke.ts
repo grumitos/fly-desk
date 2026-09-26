@@ -1,6 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -13,9 +13,10 @@ import { join, resolve } from "node:path";
  * answers: each unit's health, a sign-in, the shell with its runtime settings
  * and one of its assets. The environment carries what a production file may:
  * a date override production must ignore, and settings left empty that must
- * keep their defaults. Two things the platform relies on are checked as well:
- * the literal it greps for to know the release re-reads the token file, and
- * that the release cannot fetch a package it does not carry.
+ * keep their defaults. What the platform relies on is checked as well: the
+ * capabilities the release declares to it, the literal it still greps for to
+ * know the release re-reads the token file, and that the release cannot fetch a
+ * package it does not carry.
  *
  *   bun scripts/release-smoke.ts <fly-desk.tar.gz>
  *
@@ -36,6 +37,10 @@ const WINDOWS_HOST_ENV = ["SystemRoot", "SystemDrive", "windir", "ComSpec", "PAT
 const DEFAULT_SEARCH_MAX_FUTURE_DAYS = 365;
 const DEFAULT_MIGRATION_CONCURRENT_MONTHS = 2;
 const DEFAULT_WEB_SESSION_TTL_SECONDS = 12 * 60 * 60;
+/* What a release may declare in `deploy/release-capabilities`, one name a line
+   (`docs/DEPLOY_APP.md`, "Release Capabilities"), and the most the file weighs. */
+const KNOWN_RELEASE_CAPABILITIES: ReadonlySet<string> = new Set(["cbplus-token-file"]);
+const RELEASE_CAPABILITIES_MAX_BYTES = 1024;
 
 const artifactArgument = process.argv[2];
 if (!artifactArgument || !existsSync(artifactArgument)) {
@@ -216,6 +221,25 @@ async function stop(unit: Unit, child: ChildProcess): Promise<void> {
   }
 }
 
+function declaredCapabilities(): void {
+  const path = join(app, "deploy", "release-capabilities");
+  const entry = lstatSync(path, { throwIfNoEntry: false });
+  check(entry !== undefined && entry.isFile(), "The release has no regular file at deploy/release-capabilities (a symlink is not one): it declares no capability to the platform.");
+  check(entry.size <= RELEASE_CAPABILITIES_MAX_BYTES, `deploy/release-capabilities is ${entry.size} bytes, over its ${RELEASE_CAPABILITIES_MAX_BYTES}-byte bound.`);
+  const lines = readFileSync(path, "utf8").split("\n");
+  check(lines.pop() === "", "deploy/release-capabilities does not end its last line with a line feed.");
+  lines.forEach((line, index) => check(
+    KNOWN_RELEASE_CAPABILITIES.has(line),
+    `Line ${index + 1} of deploy/release-capabilities is ${JSON.stringify(line)}, not a known capability (${[...KNOWN_RELEASE_CAPABILITIES].join(", ")}): one name a line, LF endings, no comments, no blank lines.`,
+  ));
+  check(
+    lines.includes("cbplus-token-file"),
+    "deploy/release-capabilities does not declare cbplus-token-file: once the platform reads it, the search and redirect units would be restarted on every token renewal.",
+  );
+  passed.push(`the release declares its capabilities to the platform: ${lines.join(", ")}`);
+}
+
+/* Removed once the platform reads deploy/release-capabilities instead of grepping for this literal. */
 function releasedTokenFileLiteral(): void {
   const sources = readdirSync(join(app, "src"), { recursive: true, encoding: "utf8" }).filter((name) => name.endsWith(".ts"));
   check(
@@ -283,6 +307,7 @@ async function main(): Promise<void> {
   unpack();
   const revision = readFileSync(join(app, "REVISION"), "utf8").trim();
   prepare(revision);
+  declaredCapabilities();
   releasedTokenFileLiteral();
   cannotFetchPackages();
 

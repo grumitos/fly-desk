@@ -76,11 +76,12 @@ called. It requires each unit's `/api/health`, a sign-in, the signed-in shell
 and one of its built assets. The environment carries a `SEARCH_TODAY_OVERRIDE`
 that production must ignore and empty numeric settings that must keep their
 defaults, and the smoke checks both through the shell's runtime settings and
-the session cookie. It also requires a released `src/**/*.ts` naming
-`CBPLUS_TOKEN_FILE`, which is how the platform tells that a release re-reads
-the token file, and an import of an uncarried package to fail instead of
-downloading it. The Core quality gate runs the same smoke on every pull
-request.
+the session cookie. It also requires the release's capability declaration
+(below) to be a regular file of at most 1 KiB that lists `cbplus-token-file`
+and nothing but known capabilities; a released `src/**/*.ts` naming
+`CBPLUS_TOKEN_FILE`, the literal the platform still detects that capability
+by; and an import of an uncarried package to fail instead of downloading it.
+The Core quality gate runs the same smoke on every pull request.
 
 ## Release Preparation
 
@@ -107,6 +108,28 @@ databases, caches, the Agil identity and the Chrome profile stay under
 On a new host, never copy the Chrome profile, the session database or a token.
 Click and Book Plus comes back with the next platform renewal; Agilsmart is
 recovered through [`AGIL_SESSION_RECOVERY.md`](./AGIL_SESSION_RECOVERY.md).
+
+## Release Capabilities
+
+`deploy/release-capabilities` is the release's declaration of what its code
+does that the platform acts on. `git archive` carries it, like the prepare hook
+beside it, to `<release>/deploy/release-capabilities`. It is plain text: one
+capability name per line, each matching `[a-z0-9-]+`, with LF line endings and
+no comments or blank lines. A name is declared only while the code does what
+it says, and the release smoke refuses a name it does not know.
+
+| Capability | What the release does | Proof |
+| --- | --- | --- |
+| `cbplus-token-file` | The search runner, its workers and the redirect service re-read the Click and Book Plus token from the file named by `CBPLUS_TOKEN_FILE` whenever it changes (`src/provider-context.ts`), so a renewal needs no restart. | `test/e2e/capacity.e2e.ts`, "a renewed Click and Book Plus token file reaches searches and redirects with nothing restarted" |
+
+On a token renewal the platform restarts `fly-desk-search.service` and
+`fly-desk-redirect.service` unless the active release has `cbplus-token-file`.
+Today it still detects that capability by searching the release's
+`src/**/*.ts` for the literal `CBPLUS_TOKEN_FILE`, which is why the release
+smoke requires the literal as well. A separate `vps-platform` change switches
+the platform to this declaration; from then on, a release that does not declare
+`cbplus-token-file`, every release from before this file included, has those
+units restarted on every renewal.
 
 ## Verification and Rollback
 

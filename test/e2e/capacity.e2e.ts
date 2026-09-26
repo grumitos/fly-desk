@@ -457,6 +457,8 @@ suite.test("results, purchase paths and suggestions survive a restart of every u
    nothing observable changes until a process next reads the token. */
 const TOKEN_FILE_STAT_INTERVAL_MS = 1_000;
 
+/* The proof of `cbplus-token-file`, the capability the release declares in
+   `deploy/release-capabilities` (`docs/DEPLOY_APP.md`, "Release Capabilities"). */
 suite.test("a renewed Click and Book Plus token file reaches searches and redirects with nothing restarted", async (scope) => {
   const { fake, stack } = scope;
   fake.setFlights("cbplus", { origin: "LIM", destination: "CUZ" }, [
