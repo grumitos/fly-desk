@@ -4,7 +4,7 @@
   "type": "module",
   "version": "0.1.0",
   "description": "Workspace web privado para busqueda y cotizacion aerea orientado a agentes de viajes.",
-  "packageManager": "bun@1.4.0",
+  "packageManager": "bun@1.4.2",
   "workspaces": [
     "frontend"
   ],
@@ -27,7 +27,7 @@
   },
   "devDependencies": {
     "@typescript/native": "npm:typescript@7.0.2",
-    "@types/bun": "^1.4.0",
+    "@types/bun": "^1.4.2",
     "bun-plugin-tailwind": "^0.1.2",
     "playwright": "1.61.1"
   },

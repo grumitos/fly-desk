@@ -84,7 +84,7 @@ The React UI must not display simulated controls. The following remain outside t
 
 ### Supply Chain
 
-- supported package manager: Bun (`packageManager: "bun@1.4.0"`)
+- supported package manager: Bun (`packageManager: "bun@1.4.2"`)
 - lockfile: `bun.lock`
 - `bunfig.toml` disables lifecycle scripts during installation, filters versions published less than three days ago, and disables install-on-import
 - a release installs no packages: the runtime imports only Bun and Node built-ins, every dependency is a development one, and `deploy/prepare-release.sh` refuses runtime `dependencies`. Playwright serves the end-to-end suite and the Click and Book Plus browser fallback on a workstation; the Agil session is read from Chrome over the runtime's own DevTools client
