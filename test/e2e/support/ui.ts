@@ -79,6 +79,8 @@ export const topBar = {
   themeToggle: (page: Page) => page.getByRole("banner").getByRole("button", { name: "Cambiar tema" }),
   copyConfig: (page: Page) => page.getByRole("banner").getByRole("button", { name: "Copiar configuración" }),
   pasteConfig: (page: Page) => page.getByRole("button", { name: "Pegar configuración" }),
+  /** The shared search capacity: a meter with no text of its own, named in Spanish. */
+  capacity: (page: Page) => page.getByRole("meter", { name: "Capacidad de búsqueda" }),
 };
 
 export async function isDarkTheme(page: Page): Promise<boolean> {

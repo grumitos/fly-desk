@@ -1,7 +1,9 @@
-import { memo, useEffect, useState, type ReactNode } from "react"
+import { memo, useEffect, useState, type CSSProperties, type ReactNode } from "react"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { useSearchCapacity } from "@/hooks/useSearchCapacity"
+import type { SearchCapacity } from "@/lib/api"
 import { withoutThemeTransition } from "@/lib/reduced-motion"
 
 export const TOPBAR_SEARCH_CONTROLS_ID = "fd-topbar-search-controls"
@@ -52,6 +54,59 @@ function ThemeToggle({ theme, setTheme }: { theme: Theme; setTheme: (theme: Them
         </Button>
       </TooltipTrigger>
       <TooltipContent>{`Cambiar a tema ${nextTheme === "dark" ? "oscuro" : "claro"}`}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+const percent = new Intl.NumberFormat("es-PE", { style: "percent", maximumFractionDigits: 0 })
+
+/* The occupancy the meter draws and says: the share of the capacity the
+   searches in progress hold, never the units a search costs. */
+function describeCapacity(capacity: SearchCapacity): { share: number; searches: string; text: string } {
+  const share = Math.min(1, capacity.activeUnits / capacity.capacityUnits)
+  const running = capacity.activeSearches === 0
+    ? "ninguna búsqueda en curso"
+    : `${capacity.activeSearches} ${capacity.activeSearches === 1 ? "búsqueda" : "búsquedas"} en curso`
+  const searches = capacity.queuedSearches > 0 ? `${running} · ${capacity.queuedSearches} en espera` : running
+  return { share, searches, text: `${percent.format(share)} ocupada · ${searches}` }
+}
+
+/*
+ * The capacity the two agents share, as a bar in the month cards' geometry:
+ * its fill is the searches in progress against the most that can run, and it
+ * turns to the accent while a search waits for room. It has no text of its
+ * own; its name, its value and its tooltip say it. It follows the runner as
+ * the capacity changes and goes blank while it cannot be read.
+ */
+function CapacityMeter() {
+  const capacity = useSearchCapacity()
+  const reading = capacity ? describeCapacity(capacity) : null
+  const state = !capacity
+    ? "unknown"
+    : capacity.queuedSearches > 0 ? "waiting" : capacity.activeSearches > 0 ? "busy" : "idle"
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          role="meter"
+          aria-label="Capacidad de búsqueda"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={reading ? Math.round(reading.share * 100) : undefined}
+          aria-valuetext={reading?.text}
+          aria-hidden={reading ? undefined : true}
+          tabIndex={reading ? 0 : -1}
+          data-state={state}
+          className="fd-capacity fd-focus-ring"
+          style={{ "--fd-capacity-share": reading?.share ?? 0 } as CSSProperties}
+        >
+          <span className="fd-capacity-track">
+            <span className="fd-capacity-fill" />
+          </span>
+        </span>
+      </TooltipTrigger>
+      {reading && <TooltipContent>{`Capacidad de búsqueda · ${reading.searches}`}</TooltipContent>}
     </Tooltip>
   )
 }
@@ -108,6 +163,7 @@ export const TopBar = memo(function TopBar({
         />
 
         <div className="fd-topbar-actions">
+          <CapacityMeter />
           <TopBarCapsule>
             {/* `aria-disabled` rather than `disabled`: the button stays
                 focusable, so its tooltip can say why it does nothing yet. */}

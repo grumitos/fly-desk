@@ -20,7 +20,7 @@ import {
   type SearchCapacity,
   type SearchJob,
 } from "./support/api-client.ts";
-import { startedJob, waitForIdleCapacity, waitForResults } from "./support/flows.ts";
+import { runSearch, startedJob, waitForIdleCapacity, waitForResults } from "./support/flows.ts";
 import { defineSuite } from "./support/harness.ts";
 import { fakeCbplusToken, FAKE_CBPLUS_TERMINAL_ID, type OfferSpec } from "./support/fixtures.ts";
 import type { RecordedRequest } from "./support/fake-upstream.ts";
@@ -37,7 +37,7 @@ import {
   writeSqlite,
   type RouteFilter,
 } from "./support/scenario.ts";
-import { searchForm, searchLink } from "./support/ui.ts";
+import { notice, searchForm, searchLink, topBar } from "./support/ui.ts";
 
 /*
  * The runner under load and across restarts: the shared capacity and the queue
@@ -221,6 +221,75 @@ suite.test("two month-long ranges never run at once, and the waiting one is not 
   const firstOfB = Math.min(...callsFor(fake.requests(), { destination: "MAD" }).map((request) => request.receivedAt));
   assert.ok(firstOfB >= lastOfA, "B's month reached a provider before A's month had finished");
   await waitForIdleCapacity(agentA);
+});
+
+suite.test("the top bar's meter follows the shared capacity, and a search that has to wait says so in one line until it starts", async (scope) => {
+  const { fake, stack } = scope;
+  const { tracked, page } = await scope.signedInPage("/");
+  const meter = topBar.capacity(page);
+  const share = async () => Number(await meter.getAttribute("aria-valuenow"));
+  const said = async () => (await meter.getAttribute("aria-valuetext")) ?? "";
+  await eventually(async () => assert.equal(await share(), 0));
+  assert.match(await said(), /^0\s?%\s?ocupada · ninguna búsqueda en curso$/);
+
+  /* The other agent's two short ranges hold 4 of the 7 units. */
+  const other = await scope.api();
+  const blockers = [{ origin: "LIM", destination: "BOG" }, { origin: "LIM", destination: "AQP" }];
+  const gates = blockers.map((route) => holdRoute(fake, route));
+  for (const [index, route] of blockers.entries()) {
+    await startSearch(other, searchPayloads.range(route.origin, route.destination, day(240 + index * 2), day(241 + index * 2)));
+  }
+  await eventually(async () => assert.equal(await share(), 57), { message: "the meter followed the other agent's searches" });
+  assert.match(await said(), /^57\s?%\s?ocupada · 2 búsquedas en curso$/);
+
+  /* This agent's range does not fit: one line says it waits, and the meter
+     turns to the accent. */
+  const route = { origin: "LIM", destination: "SCL" };
+  const held = holdRoute(fake, route);
+  await page.goto(`${stack.baseUrl}${searchLink({ mode: "flexible", trip: "one-way", ...route, departureStart: day(250), departureEnd: day(254) })}`);
+  await searchForm.submit(page).waitFor();
+  const waiting = await runSearch<SearchJob>(page);
+  assert.equal(waiting.queued, true);
+  await notice.line(page).waitFor();
+  const line = await notice.line(page).innerText();
+  assert.match(line, /^En espera\s*·\s*Tu búsqueda empezará en cuanto haya un cupo libre$/);
+  assert.equal(await notice.error(page).count(), 0, "a waiting search was announced as an error");
+  await eventually(async () => assert.match(await said(), / · 1 en espera$/));
+  assert.equal(await meter.getAttribute("data-state"), "waiting");
+
+  /* One of the other agent's ranges ends: this one starts, and the line goes. */
+  gates[0]!.release();
+  await eventually(() => assert.ok(held.seen > 0, "the waiting range never started"));
+  await notice.line(page).waitFor({ state: "detached" });
+  await eventually(async () => assert.match(await said(), /^57\s?%\s?ocupada · 2 búsquedas en curso$/));
+
+  /* A hidden tab stops reading, and reads at once when it is shown again. */
+  const reads = () => tracked.apiRequests.filter((request) => new URL(request.url).pathname === "/api/search-capacity").length;
+  const setVisibility = (state: "hidden" | "visible") => page.evaluate((value) => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => value });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, state);
+  await setVisibility("hidden");
+  const readsWhileHidden = reads();
+  gates[1]!.release();
+  await sleep(1_500);
+  assert.equal(reads(), readsWhileHidden, "a hidden tab kept reading the capacity");
+  await setVisibility("visible");
+  await eventually(() => assert.ok(reads() > readsWhileHidden, "the tab shown again did not read the capacity"));
+
+  /* A capacity that cannot be read leaves the meter blank, and says nothing. */
+  held.release();
+  await waitForIdleCapacity(other);
+  await eventually(async () => assert.equal(await share(), 0));
+  const capacityReads = (url: URL) => url.pathname === "/api/search-capacity";
+  await tracked.context.route(capacityReads, (request) => request.fulfill({ status: 503, contentType: "application/json", body: "{}" }));
+  const blip = holdRoute(fake, { origin: "LIM", destination: "CUZ" });
+  await startSearch(other, searchPayloads.exact("LIM", "CUZ", day(256)));
+  await eventually(async () => assert.equal(await page.getByRole("meter", { includeHidden: true, name: "Capacidad de búsqueda" }).getAttribute("data-state"), "unknown"));
+  assert.equal(await notice.line(page).count(), 0, "an unreadable capacity was reported");
+  await tracked.context.unroute(capacityReads);
+  blip.release();
+  await eventually(async () => assert.equal(await share(), 0), { timeoutMs: 20_000, message: "the meter came back once the capacity could be read" });
 });
 
 /* The unit's cgroup as the runner reads it (`src/unit-memory.ts`), written by

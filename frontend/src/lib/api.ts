@@ -653,6 +653,7 @@ type BackendMatrixJobResponse = {
   cells?: MatrixCell[]
   recommendations?: string[]
   providerDiagnostics?: SearchJobResponse["providerDiagnostics"]
+  queued?: boolean
 }
 
 export function toBackendPayload(request: SearchRequest, sortMode: SortMode): BackendSearchPayload {
@@ -972,6 +973,7 @@ function normalizeMatrixJob(data: BackendMatrixJobResponse, sortMode: SortMode):
     sortMode,
     request,
     unchanged: data.unchanged,
+    queued: data.queued === true,
     allOffers,
     searchMeta: data.searchMeta
       ? { ...data.searchMeta, warnings: rawMetaWarnings.map(translateApiMessage) }
@@ -1329,6 +1331,50 @@ export async function startMatrix(
   return normalizeMatrixJob(data, sortMode)
 }
 
+/** The runner's shared search capacity, as the top bar draws it. */
+export type SearchCapacity = {
+  version: string
+  capacityUnits: number
+  activeUnits: number
+  activeSearches: number
+  queuedSearches: number
+}
+
+function capacityCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined
+}
+
+/**
+ * Reads the shared capacity: at once without `version`, otherwise held by the
+ * server until it is no longer `version` or `waitMs` runs out. A page left
+ * open asks this on its own, so an answer it cannot use, a refused session
+ * included, only fails the read: it never sends the page to sign in.
+ */
+export async function readSearchCapacity(version: string | undefined, waitMs: number, signal: AbortSignal): Promise<SearchCapacity> {
+  const query = version ? `?version=${encodeURIComponent(version)}&wait=${waitMs}` : ""
+  const response = await fetch(`/api/search-capacity${query}`, { signal, cache: "no-store" })
+  if (!response.ok) {
+    throw new Error(`The capacity answered ${response.status}.`)
+  }
+
+  const data = await response.json() as Record<string, unknown>
+  const capacityUnits = capacityCount(data.capacityUnits)
+  const activeUnits = capacityCount(data.activeUnits)
+  const activeSearches = capacityCount(data.activeSearches)
+  const queuedSearches = capacityCount(data.queuedSearches)
+  if (
+    typeof data.version !== "string"
+    || !capacityUnits
+    || activeUnits === undefined
+    || activeSearches === undefined
+    || queuedSearches === undefined
+  ) {
+    throw new Error("The capacity answered an unreadable reading.")
+  }
+
+  return { version: data.version, capacityUnits, activeUnits, activeSearches, queuedSearches }
+}
+
 export async function pollMatrix(
   jobId: string,
   sortMode: SortMode,
@@ -1404,10 +1450,16 @@ export async function startMigrationSearch(
         ])
       : warnings
 
+    /* A sweep waits while every month it has asked for waits: once one has
+       started, a month waiting its turn is a sweep under way, not a queued one. */
+    const askedMonths = monthResults.filter((result) => result.job)
     return {
       searchJobId: `migration-${requestedAt}`,
       searchComplete,
       searchStatus: searchComplete ? "completed" : "running",
+      queued: !searchComplete
+        && askedMonths.length > 0
+        && askedMonths.every((result) => result.job?.queued === true && !result.complete),
       revision: Math.max(1, ...monthResults.map((result) => result.job?.revision ?? 0)),
       sortMode,
       request,

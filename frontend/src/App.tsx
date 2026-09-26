@@ -12,7 +12,7 @@ import { ActiveFilterChips } from "@/components/results/ActiveFilterChips"
 import type { DisplayMonth } from "@/components/results/migration-month-model"
 import { SearchShell, type SearchDraftHandle } from "@/components/SearchShell"
 import { TopBar } from "@/components/TopBar"
-import { AppIcon } from "@/components/ui/app-icon"
+import { AppIcon, type AppIconName } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { SegmentedControl, SegmentedOption } from "@/components/ui/segmented-control"
@@ -75,7 +75,11 @@ type AirlineFilterOption = {
   count: number
 }
 
-type Notice = { message: string; tone: "warning" | "error" }
+type Notice = { message: string; tone: "warning" | "error"; icon?: AppIconName }
+
+/* A search the runner holds until there is room for it: never refused, and
+   said once, while it waits (REDESIGN_CONTRACT, «Una búsqueda en espera»). */
+const QUEUED_SEARCH_NOTICE = "En espera\nTu búsqueda empezará en cuanto haya un cupo libre"
 
 type FormSeed = { id: number; request: SearchRequest }
 
@@ -533,11 +537,12 @@ export default function App() {
     if (gestureError) return { message: gestureError, tone: "error" }
     if (error) return { message: error, tone: "error" }
     if (statusMessage) return { message: statusMessage, tone: "warning" }
+    if (loading && results?.queued) return { message: QUEUED_SEARCH_NOTICE, tone: "warning", icon: "clock" }
     if (outcome.notice) {
       return { message: outcome.notice, tone: outcome.allFailed || outcome.jobFailed ? "error" : "warning" }
     }
     return null
-  }, [error, gestureError, outcome, statusMessage])
+  }, [error, gestureError, loading, outcome, results?.queued, statusMessage])
   const visibleNotice = notice && notice.message !== dismissedNotice ? notice : null
 
   const dismissNotice = useCallback(() => {
@@ -964,7 +969,7 @@ function NoticeLine({ notice, onDismiss }: { notice: Notice; onDismiss: () => vo
 
   return (
     <div className={`fd-alert-line fd-motion-emergente mt-2 ${notice.tone === "error" ? "fd-alert-line-error" : ""}`}>
-      <AppIcon name="alert" />
+      <AppIcon name={notice.icon ?? "alert"} />
       <span className="fd-alert-line-text" title={notice.message}>
         <span className="font-bold">{headline}</span>
         {detail && (

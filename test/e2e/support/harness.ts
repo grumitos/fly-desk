@@ -8,6 +8,7 @@ import {
   type BrowserContext,
   type BrowserContextOptions,
   type Page,
+  type Request as PlaywrightRequest,
   type Response as PlaywrightResponse,
 } from "playwright";
 import { signIn, type ApiSession } from "./api-client.ts";
@@ -102,11 +103,16 @@ export class TrackedContext {
   /** Every `/r/<id>` answer, in order; a 3xx is recorded and not followed. */
   readonly redirects: RedirectRecord[] = [];
   #pendingBodies: Promise<void>[] = [];
+  /* The `/api` requests in flight, but the capacity the title bar follows. */
+  #apiInFlight = new Set<PlaywrightRequest>();
+  #apiSettledSince = Date.now();
 
   constructor(context: BrowserContext) {
     this.context = context;
     context.on("page", (page) => this.#watch(page));
     context.on("response", (response) => this.#record(response));
+    context.on("requestfinished", (request) => this.#settle(request));
+    context.on("requestfailed", (request) => this.#settle(request));
     context.on("request", (request) => {
       let pathname = "";
       try {
@@ -116,8 +122,32 @@ export class TrackedContext {
       }
       if (pathname.startsWith("/api/")) {
         this.apiRequests.push({ at: Date.now(), method: request.method(), url: request.url(), body: request.postData() });
+        if (pathname !== "/api/search-capacity") {
+          this.#apiInFlight.add(request);
+        }
       }
     });
+  }
+
+  /**
+   * Resolves once no `/api` request of this context has been in flight for
+   * `quietMs`, the title bar's capacity reading apart: what `networkidle`
+   * means for a page that always has that reading out.
+   */
+  async apiSettled(quietMs = 500, timeoutMs = 15_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.#apiInFlight.size > 0 || Date.now() - this.#apiSettledSince < quietMs) {
+      if (Date.now() > deadline) {
+        throw new Error(`/api still busy after ${timeoutMs} ms: ${[...this.#apiInFlight].map((request) => request.url()).join(", ")}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+
+  #settle(request: PlaywrightRequest): void {
+    if (this.#apiInFlight.delete(request) && this.#apiInFlight.size === 0) {
+      this.#apiSettledSince = Date.now();
+    }
   }
 
   async newPage(): Promise<Page> {

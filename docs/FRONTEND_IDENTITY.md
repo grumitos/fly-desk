@@ -36,10 +36,10 @@ comes from Claude's light and dark palettes.
 | `primary` / `primary-foreground` | `#d97757` / `#ffffff` | same | The primary action, checked controls, the selection edge |
 | `primary-hover` | `#c36b4e` | same | A primary button under the pointer |
 | `primary-badge` | `#ffffff33` | same | A count on a primary fill |
-| `warning` / `destructive` (+ `-foreground`) | `#d97757` / `#ffffff` | same | The accent in its warning and error roles: an invalid field's edge and message, the stop button under the pointer, a warning glyph |
+| `warning` / `destructive` (+ `-foreground`) | `#d97757` / `#ffffff` | same | The accent in its warning and error roles: an invalid field's edge and message, the stop button under the pointer, a warning glyph, the capacity meter while a search waits |
 | `warning-soft` / `warning-soft-foreground` | `#d977571a` / `#6f321f` | `#d9775726` / `#f2c3b3` | The notice line's ground and text |
 | `warning-border` / `destructive-border` | `#d9775761` / `#d9775780` | same | The notice's edge for a warning, and the heavier one for an error |
-| `border` / `input` | `#1f1f1e26` | `#e2e1da26` | Dividers and control edges |
+| `border` / `input` | `#1f1f1e26` | `#e2e1da26` | Dividers and control edges, the capacity meter's track |
 | `rule` | `#1f1f1e40` | `#e2e1da40` | The heavier line under the column headings |
 | `focus` | `#d977578c` | same | The keyboard focus ring |
 | `glow` | `#d977572e` | same | The glow around a focused or open field |
@@ -121,7 +121,7 @@ because the build cannot keep a derived colour theme-aware.
 
 ## Surfaces and Components
 
-- `topbar`: the product mark, the copy and paste capsule and the theme switch.
+- `topbar`: the product mark, the capacity meter, the copy and paste capsule and the theme switch.
   While a search exists on a desk it also holds the mode and trip segments. On
   a phone it is drawn at rest only; once a search exists its copy action moves
   to the right end of the filter row.
@@ -131,6 +131,7 @@ because the build cannot keep a derived colour theme-aware.
 - Filters: a 248px column on a desk and tablet, a sheet on a phone, with visible selected states and «Limpiar».
 - The result row: a table row on a desk — the carrier's mark, «who flies», the legs, baggage, price and provider — under a column header whose four sortable columns (Horario, Duración, Escalas, Precio) are the order control. Below 787px of list the row becomes the stacked phone card.
 - The detail: the selected offer and its quotation, in flat data groups under a hero and an action bar; the third column of a wide desk, a side sheet on a narrower desk or tablet, a bottom sheet on a phone. With nothing selected it says so in one quiet line, `<p class="fd-detail-empty">` «Selecciona una oferta para ver su detalle.»
+- The capacity meter: the capacity the two agents share, a 24×6 bar in the month cards' geometry inside a 32px cell, left of the capsules. Its `placeholder` fill on a `border` track is the share the searches in progress hold, and it turns `warning` while a search waits for room. It has no text: it is a `meter` named «Capacidad de búsqueda» whose value says the share and the searches in words, with a tooltip for the pointer. It is blank, its box kept, while the capacity cannot be read.
 - The provider rail: «Buscando en» and the providers this deployment searches, at the foot of the idle screen, with no health state. A provider that fails a search is reported in the notice line, never with its own words.
 - The notice line: one line, dismissible, above the results (see Copy).
 - Primitives: `.fd-btn` (primary, secondary and ghost; chip, small, medium, extra-large and icon sizes), `.fd-segmented`, `.fd-popover`, `.fd-checkbox`, `.fd-switch`, `.fd-tooltip`, `.fd-key`, and the `Sheet` component in bottom, side and modal placements.
@@ -195,14 +196,17 @@ On every layout: no horizontal overflow; action groups wrap instead of shrinking
 - Spanish labels and statuses, sentence case.
 - Search states in words: «Buscando vuelos» is announced while a search runs,
   «Parcial» shows while a list is still growing, «N buscando» while a sweep has months out,
-  «Actualizando» on a month still loading, «Detenida» after a stop. An idle
+  «Actualizando» on a month still loading, «Detenida» after a stop, «En espera»
+  while a search waits for capacity. An idle
   desk shows no status.
 - The notice line names a provider in its display name and never quotes it:
   «Resultados incompletos · Agilsmart respondió en parte» for a provider that
   answered part of a search, «Resultados incompletos · Agilsmart no respondió»
   (or «no disponible», «sin respuesta a tiempo», «sin sesión activa») for one
   that answered nothing, and «No se pudo consultar a ningún proveedor» when
-  none answered. A migratory sweep uses the same line. There is no notice for
+  none answered. A migratory sweep uses the same line. A search waiting for
+  capacity has one, «En espera · Tu búsqueda empezará en cuanto haya un cupo
+  libre», with a clock, until it starts. There is no notice for
   a search that is merely slow.
 - CTA labels are direct: «Buscar», «Cotizar», «Copiar», «Limpiar».
 
