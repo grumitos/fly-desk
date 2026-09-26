@@ -43,6 +43,8 @@ const QUOTATION_ERROR_TITLE = "No se pudo confirmar la tarifa"
 const QUOTATION_ERROR_DETAIL = "El proveedor no respondió. El texto no se copió."
 const QUOTATION_ERROR_TITLE_SHORT = "No se copió"
 const QUOTATION_ERROR_DETAIL_SHORT = "El proveedor no confirmó la tarifa."
+/* What a quote is busy doing: the button's tooltip, and what is read out. */
+const QUOTING_LABEL = "Validando la tarifa con el proveedor"
 
 interface DetailPanelProps {
   offer: CanonicalOffer | null
@@ -148,7 +150,7 @@ export function DetailPanel({
     : preparedQuotation?.error
       ? "La oferta no contiene todos los datos necesarios para cotizar"
       : isQuoting
-        ? "Validando la tarifa con el proveedor"
+        ? QUOTING_LABEL
         : "Cotizar y copiar"
 
   const clearConfirmationTimers = useCallback(() => {
@@ -458,6 +460,7 @@ export function DetailPanel({
               type="button"
               size="sm"
               className="fd-detail-quote-error-retry"
+              aria-busy={isQuoting || undefined}
               onClick={() => void handleQuotation()}
             >
               {isQuoting
@@ -468,6 +471,10 @@ export function DetailPanel({
           </div>
         </div>
       )}
+
+      {/* Busy, the button keeps its word and only its icon turns; this says
+          what it waits for, from a region that is there before a quote starts. */}
+      <p className="sr-only" role="status">{isQuoting ? QUOTING_LABEL : ""}</p>
 
       <div className="fd-detail-footer" data-quote-error={quotationFailed || undefined}>
         {activePathFeedback && (
@@ -510,6 +517,7 @@ export function DetailPanel({
               className="fd-detail-quote-action"
               onClick={handleQuotation}
               disabled={!canQuote}
+              aria-busy={isQuoting || undefined}
             >
               {isQuoting
                 ? <AppIcon name="loading" size={14} spin />
