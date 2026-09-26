@@ -6,11 +6,52 @@
  * with ECONNRESET before any response, the busier the host the more often.
  * Measured in isolation against a server closing idle connections, one more
  * attempt on a connection of its own recovered every request that died so.
+ *
+ * A request also belongs to the search that asked for it. The search's stop
+ * signal travels in an async context (`withProviderJobSignal`), so the fan-out
+ * code between a job and its requests does not carry it: a stopped search
+ * aborts the requests it has in flight and sends no new one.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 
 /* The provider sent nothing back: the connection failed before any response arrived. */
 export class ProviderUnansweredError extends Error {
   override name = "ProviderUnansweredError";
+}
+
+/* The search the request belonged to was stopped: it was aborted, or never sent. */
+export class ProviderRequestCancelledError extends Error {
+  override name = "ProviderRequestCancelledError";
+
+  constructor(label: string) {
+    super(`${label} was stopped with its search.`);
+  }
+}
+
+const providerJobSignal = new AsyncLocalStorage<AbortSignal>();
+
+/** Runs a search's provider work under its stop signal. */
+export function withProviderJobSignal<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
+  return providerJobSignal.run(signal, run);
+}
+
+/** The stop signal of the search this code runs for, if it runs for one. */
+export function currentProviderJobSignal(): AbortSignal | undefined {
+  return providerJobSignal.getStore();
+}
+
+/*
+ * Runs work that several searches share — a token mint, cached engine
+ * metadata — outside any one search's signal: stopping the search that happened
+ * to start it must not fail the others waiting on it.
+ */
+export function outsideProviderJob<T>(run: () => T): T {
+  return providerJobSignal.exit(run);
+}
+
+export function isProviderRequestCancelled(error: unknown): boolean {
+  return error instanceof ProviderRequestCancelledError
+    || (error instanceof Error && error.cause instanceof ProviderRequestCancelledError);
 }
 
 export interface ProviderFetchOptions {
@@ -30,8 +71,16 @@ export interface ProviderFetchOptions {
  * provider that read it before the connection died would read it again.
  */
 export async function fetchProvider(url: string, init: RequestInit, options: ProviderFetchOptions): Promise<Response> {
+  const jobSignal = providerJobSignal.getStore();
+  const cancelled = () => new ProviderRequestCancelledError(options.label);
+  if (jobSignal?.aborted) {
+    throw cancelled();
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  const abortWithJob = () => controller.abort();
+  jobSignal?.addEventListener("abort", abortWithJob, { once: true });
 
   const attempt = async (connection: "pooled" | "new"): Promise<Response> => {
     let response: Response | undefined;
@@ -49,6 +98,10 @@ export async function fetchProvider(url: string, init: RequestInit, options: Pro
         headers: response.headers,
       });
     } catch (error) {
+      if (jobSignal?.aborted) {
+        throw cancelled();
+      }
+
       /* The transport error stays as the cause: the public reason is built
          from the message, and the service log names what actually failed. */
       if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
@@ -74,6 +127,7 @@ export async function fetchProvider(url: string, init: RequestInit, options: Pro
     return await attempt("new");
   } finally {
     clearTimeout(timeout);
+    jobSignal?.removeEventListener("abort", abortWithJob);
   }
 }
 

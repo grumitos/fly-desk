@@ -22,24 +22,32 @@ export interface ProviderSearchResult {
   incremental?: boolean;
 }
 
-interface ProviderSearchWorkerInput {
+/*
+ * How a job is stopped. `signal` is the job's own stop, heard at once;
+ * `shouldContinue` is asked every `CANCELLATION_POLL_INTERVAL_MS` and catches
+ * a job that left the running state without its signal.
+ */
+interface WorkerJobStop {
+  signal?: AbortSignal;
+  shouldContinue?: () => boolean;
+}
+
+interface ProviderSearchWorkerInput extends WorkerJobStop {
   kind: "exact" | "range";
   providerId: ProviderId;
   request: SearchRequest;
   providerContext?: ProviderContext;
   onProgress?: (result: ProviderSearchResult) => boolean | void;
   onProviderEvent?: (event: ProviderDiagnosticEvent) => void;
-  shouldContinue?: () => boolean;
 }
 
-interface ProviderMatrixWorkerInput {
+interface ProviderMatrixWorkerInput extends WorkerJobStop {
   providerId: ProviderId;
   request: SearchRequest;
   providerContext?: ProviderContext;
   draft: MatrixResponse;
   onCellResolved?: (cell: MatrixCell) => boolean | void;
   onProviderEvent?: (event: ProviderDiagnosticEvent) => void;
-  shouldContinue?: () => boolean;
 }
 
 interface WorkerHandle {
@@ -230,11 +238,14 @@ async function readLines(
 function runInWorker(
   input: ProviderSearchWorkerRequest,
   onMessage: (message: ProviderSearchWorkerMessage, child: WorkerHandle) => void,
-  shouldContinue?: () => boolean,
+  { signal, shouldContinue }: WorkerJobStop = {},
 ): Promise<ProviderSearchWorkerMessage> {
   const workerPath = resolveWorkerPath();
   if (!searchWorkerProcessesEnabled() || !workerPath) {
     return Promise.reject(new Error("Search worker processes are disabled or unavailable."));
+  }
+  if (signal?.aborted) {
+    return Promise.reject(new Error("Search worker cancelled."));
   }
 
   return new Promise((resolve, reject) => {
@@ -259,6 +270,7 @@ function runInWorker(
       },
     };
 
+    const stopOnSignal = () => finish(() => reject(new Error("Search worker cancelled.")));
     const finish = (callback: () => void) => {
       if (settled) {
         return;
@@ -268,11 +280,13 @@ function runInWorker(
         clearInterval(cancellationTimer);
       }
       clearTimeout(deadline);
+      signal?.removeEventListener("abort", stopOnSignal);
       callback();
       child.kill();
     };
     const deadline = setTimeout(() => finish(() => reject(workerJobTimeoutError())), searchWorkerJobTimeoutMs());
     deadline.unref?.();
+    signal?.addEventListener("abort", stopOnSignal, { once: true });
 
     if (shouldContinue) {
       cancellationTimer = setInterval(() => {
@@ -362,7 +376,7 @@ interface SearchWorkerPool {
   run: (
     input: ProviderSearchWorkerRequest,
     onMessage: (message: ProviderSearchWorkerMessage, child: WorkerHandle) => void,
-    shouldContinue?: () => boolean,
+    stop?: WorkerJobStop,
   ) => Promise<ProviderSearchWorkerMessage>;
   prewarm: (providerId: ProviderId) => Promise<void>;
   start: () => void;
@@ -377,6 +391,7 @@ interface PooledJob {
   reject: (error: Error) => void;
   timer?: ReturnType<typeof setInterval>;
   deadline?: ReturnType<typeof setTimeout>;
+  detach?: () => void;
 }
 
 interface PooledWorker {
@@ -430,6 +445,7 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
       clearInterval(job.timer);
     }
     clearTimeout(job.deadline);
+    job.detach?.();
     worker.jobs.delete(job.id);
     worker.completedJobs += 1;
     complete();
@@ -531,8 +547,13 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
     payload: ProviderSearchWorkerInbound,
     id: string,
     onMessage: (message: ProviderSearchWorkerMessage, child: WorkerHandle) => void,
-    shouldContinue?: () => boolean,
+    { signal, shouldContinue }: WorkerJobStop = {},
   ): Promise<ProviderSearchWorkerMessage> => new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Search worker cancelled."));
+      return;
+    }
+
     let worker: PooledWorker;
     try {
       worker = ensureWorker(providerId);
@@ -572,6 +593,11 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
       timer.unref?.();
       job.timer = timer;
     }
+    if (signal) {
+      const stop = () => cancelJob(worker, job);
+      signal.addEventListener("abort", stop, { once: true });
+      job.detach = () => signal.removeEventListener("abort", stop);
+    }
 
     try {
       writeToWorker(worker, payload);
@@ -581,8 +607,8 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
   });
 
   return {
-    run: (input, onMessage, shouldContinue) =>
-      submit(input.providerId, input, input.id, onMessage, shouldContinue),
+    run: (input, onMessage, stop) =>
+      submit(input.providerId, input, input.id, onMessage, stop),
     prewarm: async (providerId) => {
       const id = crypto.randomUUID();
       const result = await submit(
@@ -670,12 +696,12 @@ export async function prewarmProviderInWorker(providerId: ProviderId): Promise<v
 function runProviderWorkerJob(
   input: ProviderSearchWorkerRequest,
   onMessage: (message: ProviderSearchWorkerMessage, child: WorkerHandle) => void,
-  shouldContinue?: () => boolean,
+  stop: WorkerJobStop,
 ): Promise<ProviderSearchWorkerMessage> {
   if (poolIsUsable()) {
-    return getDefaultPool().run(input, onMessage, shouldContinue);
+    return getDefaultPool().run(input, onMessage, stop);
   }
-  return runInWorker(input, onMessage, shouldContinue);
+  return runInWorker(input, onMessage, stop);
 }
 
 export async function runProviderSearchInWorker(input: ProviderSearchWorkerInput): Promise<ProviderSearchResult> {
@@ -708,7 +734,7 @@ export async function runProviderSearchInWorker(input: ProviderSearchWorkerInput
         child.kill();
       }
     },
-    input.shouldContinue,
+    { signal: input.signal, shouldContinue: input.shouldContinue },
   );
 
   if (result.type !== "search-complete") {
@@ -748,7 +774,7 @@ export async function runProviderMatrixInWorker(input: ProviderMatrixWorkerInput
         child.kill();
       }
     },
-    input.shouldContinue,
+    { signal: input.signal, shouldContinue: input.shouldContinue },
   );
 
   if (result.type !== "matrix-complete") {

@@ -17,8 +17,8 @@ export interface ProviderSearchWorkerRequest {
   draft?: MatrixResponse;
 }
 
-/* Cooperative cancellation: the worker keeps serving the job until its provider
-   callbacks are asked whether to continue, and answers "no" from then on. */
+/* Stops a job: the worker aborts its provider requests in flight, sends no new
+   one, and its provider callbacks answer "no" from then on. */
 interface ProviderSearchWorkerCancel {
   id: string;
   type: "cancel";

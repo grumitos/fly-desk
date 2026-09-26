@@ -266,8 +266,8 @@ function stopRange(first: number): { link: string; days: string[] } {
   };
 }
 
-/* The pooled worker hears about a cancellation on its client's 500 ms poll
-   (`src/search-worker-client.ts`); there is nothing to observe until then. */
+/* What a stopped search would have asked next, it would have asked within
+   this window; nothing asked in it is nothing asked at all. */
 const CANCELLATION_PROPAGATION_MS = 2_000;
 
 suite.test("stopping a search halts its fan-out, keeps what it had, and running it again starts from that", async (scope) => {
@@ -292,18 +292,20 @@ suite.test("stopping a search halts its fan-out, keeps what it had, and running 
   });
   assert.equal(new URL(cancel.url).searchParams.get("cachePartial"), "1");
 
-  /* Only once the worker has heard of it do the providers answer. */
-  await sleep(CANCELLATION_PROPAGATION_MS);
-  const asked = new Set(providerSearches(fake).map((request) => request.query?.departureDate));
+  /* The stop reaches the workers, which hang up on every request the search
+     still had open at its providers, and ask for nothing more. */
+  const held = await eventually(() => {
+    const open = providerSearches(fake).filter((request) => request.query?.departureDate !== days[0]);
+    assert.ok(open.length > 0, "no later day reached a provider");
+    assert.deepEqual(open.filter((request) => !request.aborted).map((request) => request.seq), [], "a request of the stopped search is still open at its provider");
+    return open;
+  });
+  const asked = providerSearches(fake).length;
   later.release();
-  await eventually(() => assert.ok(providerSearches(fake).every((request) => request.status !== undefined), "a held request never answered"));
   await sleep(CANCELLATION_PROPAGATION_MS);
-  const askedAfter = new Set(providerSearches(fake).map((request) => request.query?.departureDate));
-  assert.deepEqual([...askedAfter].sort(), [...asked].sort(), "a stopped search asked a provider for another day");
-  assert.ok(asked.size < STOP_DAYS, `all ${asked.size} days were asked`);
-  /* In-flight provider calls are not aborted: the pooled worker cancels
-     cooperatively, so what was asked runs to its answer. */
-  assert.equal(fake.requests((request) => request.aborted).length, 0);
+  assert.equal(providerSearches(fake).length, asked, "a stopped search asked a provider again");
+  assert.ok(held.every((request) => request.status === undefined), "a provider answered a request the search had hung up on");
+  assert.ok(new Set(providerSearches(fake).map((request) => request.query?.departureDate)).size < STOP_DAYS, "every day was asked");
 
   /* The backend kept the partial list as a finished, reusable result. */
   const api = await scope.api();

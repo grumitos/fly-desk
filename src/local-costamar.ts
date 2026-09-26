@@ -65,7 +65,7 @@ import {
   resolveUsableCostamarBrandedToken,
 } from "./provider-context";
 import { recordProviderFirstHttpRequest } from "./provider-diagnostics";
-import { fetchProvider } from "./provider-fetch";
+import { fetchProvider, isProviderRequestCancelled, outsideProviderJob } from "./provider-fetch";
 import { providerPublicFailureMessage } from "./provider-status";
 import { openUrlLocally } from "./local-browser";
 import {
@@ -2400,7 +2400,9 @@ async function warmCostamarRedirectContext(
     });
   }
 
-  const promise = (async () => {
+  /* Every search of this terminal waits on the one warm-up, so no single
+     search's stop aborts it. */
+  const promise = outsideProviderJob(async () => {
     recentCostamarSessionWarmups.set(warmupKey, Date.now());
     const seedContext = {
       ...context,
@@ -2447,7 +2449,7 @@ async function warmCostamarRedirectContext(
     }
 
     return latest;
-  })();
+  });
 
   pendingCostamarSessionWarmups.set(warmupKey, promise);
   try {
@@ -2565,7 +2567,7 @@ async function searchLocalCostamarExactWithRetry(
     try {
       return await searchLocalCostamarExact(request, providerContext);
     } catch (error) {
-      if (attempt >= COSTAMAR_RANGE_DAY_RETRY_ATTEMPTS || refusesEveryDate(error)) {
+      if (attempt >= COSTAMAR_RANGE_DAY_RETRY_ATTEMPTS || refusesEveryDate(error) || isProviderRequestCancelled(error)) {
         throw error;
       }
 
@@ -3491,7 +3493,8 @@ async function getEngineMetadata(context: CostamarProviderContext): Promise<Cost
     return cached;
   }
 
-  const request = fetchCostamarJson<CostamarEngineMetadata>(
+  /* Cached for every search after this one, so no single search's stop aborts it. */
+  const request = outsideProviderJob(() => fetchCostamarJson<CostamarEngineMetadata>(
     {
       ...context,
       apiBaseUrl: engineBaseUrl,
@@ -3499,7 +3502,7 @@ async function getEngineMetadata(context: CostamarProviderContext): Promise<Cost
     `/engines/${encodeURIComponent(context.terminalId)}`,
     { method: "GET" },
     "Click and Book Plus engine metadata",
-  ).catch((error) => {
+  )).catch((error) => {
     engineCache.delete(cacheKey);
     throw error;
   });

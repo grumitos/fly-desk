@@ -13,6 +13,7 @@ import {
   resolveLocalCostamarRangeProgressive,
 } from "./local-costamar";
 import { closeOpenBrowserTargets } from "./browser-targets";
+import { withProviderJobSignal } from "./provider-fetch";
 import type { CanonicalOffer, MatrixResponse, ProviderId } from "./core/types";
 import {
   createProviderDiagnostics,
@@ -29,11 +30,12 @@ import type {
   ProviderSearchWorkerRequest,
 } from "./search-worker-protocol";
 
-/* Jobs the client gave up on. The provider callbacks answer `false` from here
-   on, which is what stops the remaining fan-out inside a pooled worker that
-   must stay alive for the other jobs it is multiplexing. */
-const cancelledJobIds = new Set<string>();
-const activeJobIds = new Set<string>();
+/* The jobs this worker is running, each with the signal that stops it. A job
+   the client gives up on is aborted: its provider requests in flight are cut
+   (`fetchProvider`), no new one is sent, and its provider callbacks answer
+   `false`, which ends the fan-out inside a pooled worker that stays alive for
+   the other jobs it is multiplexing. */
+const runningJobs = new Map<string, AbortController>();
 
 /*
  * How long a stopping worker spends closing the tabs it has open in the shared
@@ -44,7 +46,7 @@ const STOP_TAB_CLOSE_TIMEOUT_MS = 2_000;
 let stopping = false;
 
 function jobIsLive(id: string): boolean {
-  return !stopping && !cancelledJobIds.has(id);
+  return !stopping && runningJobs.get(id)?.signal.aborted === false;
 }
 
 function send(message: ProviderSearchWorkerMessage): void {
@@ -67,6 +69,9 @@ function stopOnSignal(): void {
     return;
   }
   stopping = true;
+  for (const controller of runningJobs.values()) {
+    controller.abort();
+  }
   void closeOpenBrowserTargets(STOP_TAB_CLOSE_TIMEOUT_MS).finally(() => process.exit(0));
 }
 
@@ -101,14 +106,14 @@ function createMatrixDraft(input: ProviderSearchWorkerRequest): MatrixResponse {
     : createLocalAgilMatrixDraft(input.request, draftMeta);
 }
 
-async function runProviderSearch(input: ProviderSearchWorkerRequest): Promise<ProviderSearchWorkerComplete> {
+async function runProviderSearch(input: ProviderSearchWorkerRequest, signal: AbortSignal): Promise<ProviderSearchWorkerComplete> {
   const diagnostics = createProviderDiagnostics(input.providerId, input.kind === "matrix" ? "matrix" : input.kind);
   diagnostics.events = [];
   const emitEvent = (event: typeof diagnostics.events[number]) => {
     send({ id: input.id, type: "provider-event", event });
   };
 
-  return withProviderDiagnostics(diagnostics, emitEvent, async () => {
+  return withProviderDiagnostics(diagnostics, emitEvent, () => withProviderJobSignal(signal, async () => {
     recordProviderDiagnosticEvent("provider_started");
 
     if (input.kind === "matrix") {
@@ -157,7 +162,7 @@ async function runProviderSearch(input: ProviderSearchWorkerRequest): Promise<Pr
       warnings: result.warnings,
       partial: result.partial,
     };
-  });
+  }));
 }
 
 let pendingMessages = 0;
@@ -172,13 +177,13 @@ function maybeExit(): void {
 
 function handleWorkerRequest(message: ProviderSearchWorkerRequest): void {
   pendingMessages += 1;
-  activeJobIds.add(message.id);
-  void runProviderSearch(message)
+  const controller = new AbortController();
+  runningJobs.set(message.id, controller);
+  void runProviderSearch(message, controller.signal)
     .then((result) => send(result))
     .catch((error) => send(serializeError(message.id, message.providerId, error)))
     .finally(() => {
-      activeJobIds.delete(message.id);
-      cancelledJobIds.delete(message.id);
+      runningJobs.delete(message.id);
       pendingMessages -= 1;
       maybeExit();
     });
@@ -205,11 +210,8 @@ function handleInboundMessage(message: ProviderSearchWorkerInbound): void {
   }
 
   if (message.type === "cancel") {
-    /* A cancel that lands after the job settled has nothing to stop; recording
-       it would only pin the id in memory for the worker's lifetime. */
-    if (activeJobIds.has(message.id)) {
-      cancelledJobIds.add(message.id);
-    }
+    /* A cancel that lands after the job settled finds nothing to stop. */
+    runningJobs.get(message.id)?.abort();
     return;
   }
 
