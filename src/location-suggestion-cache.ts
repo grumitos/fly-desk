@@ -137,6 +137,31 @@ export class LocationSuggestionCacheStore {
     return cloneSuggestions(await promise);
   }
 
+  /**
+   * The station each code names, from the provider answers the cache already
+   * holds, whichever query and browser they were fetched for. A lookup, never a
+   * load: a code no live entry answers is absent, and nothing is asked of a
+   * provider. Where several entries name one code, the entry touched last wins.
+   */
+  findStations(codes: Iterable<string>, nowMs = Date.now()): Map<string, LocationSuggestion> {
+    const wanted = new Set([...codes].map((code) => code.trim().toUpperCase()));
+    const found = new Map<string, { suggestion: LocationSuggestion; touchedAtMs: number }>();
+    for (const entry of this.entries.values()) {
+      if (entry.expiresAtMs <= nowMs) {
+        continue;
+      }
+      for (const suggestion of entry.suggestions) {
+        const code = String(suggestion.code ?? "").trim().toUpperCase();
+        const current = found.get(code);
+        if (wanted.has(code) && (!current || entry.touchedAtMs > current.touchedAtMs)) {
+          found.set(code, { suggestion, touchedAtMs: entry.touchedAtMs });
+        }
+      }
+    }
+
+    return new Map([...found].map(([code, { suggestion }]) => [code, { ...suggestion }]));
+  }
+
   purgeExpired(nowMs = Date.now()): void {
     for (const [key, entry] of this.entries) {
       if (entry.expiresAtMs <= nowMs) {

@@ -1,4 +1,24 @@
 import { createHmac, randomBytes } from "node:crypto";
+import type { BrowserContext, Page } from "playwright";
+
+/*
+ * The id a browser keeps in `localStorage` (`frontend/src/lib/browser-client-session.ts`),
+ * which its «Recientes» are recorded under.
+ */
+const BROWSER_CLIENT_ID_KEY = "fly-desk:client-session-id";
+
+/** The id the desk gave the page's browser, or `null` before it gave one. */
+export function readBrowserClientId(page: Page): Promise<string | null> {
+  return page.evaluate((key) => localStorage.getItem(key), BROWSER_CLIENT_ID_KEY);
+}
+
+/** Every page of `context` is the browser `id`, and shows that browser's «Recientes». */
+export async function adoptBrowserClientId(context: BrowserContext, id: string): Promise<void> {
+  await context.addInitScript(([key, value]) => {
+    /* A page's first document, `about:blank`, has no storage to write to. */
+    if (location.protocol.startsWith("http")) localStorage.setItem(key, value);
+  }, [BROWSER_CLIENT_ID_KEY, id] as const);
+}
 
 /*
  * A signed-in session as the web unit writes it, minted with the stack's own

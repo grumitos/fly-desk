@@ -127,6 +127,7 @@ because the build cannot keep a derived colour theme-aware.
   to the right end of the filter row.
 - `search-shell`: one cohesive shell for trip type, origin, destination, dates, passengers, and the search action. The policy line — the search window, the stay and passenger ceilings — sits at the foot of the idle screen.
 - `field`: the 52px field, label and value, with one height and one focus treatment.
+- The station panel: under Origen and Destino on a desk, a sheet on a phone. One panel whether it shows the history («Recientes», «Frecuentes») or the matches of two letters («Coincidencias»): a head with its count over each group, one 46px row — the type, the code, the city over its detail — and the keys at its foot on a desk. A code nothing names is drawn alone. Its rules are in [`REDESIGN_CONTRACT.md`](./REDESIGN_CONTRACT.md), "Rules for the station panel".
 - `segmented`: the search mode, the trip type and the filter groups.
 - Filters: a 248px column on a desk and tablet, a sheet on a phone, with visible selected states and «Limpiar».
 - The result row: a table row on a desk — the carrier's mark, «who flies», the legs, baggage, price and provider — under a column header whose four sortable columns (Horario, Duración, Escalas, Precio) are the order control. Below 787px of list the row becomes the stacked phone card.

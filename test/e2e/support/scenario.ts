@@ -152,6 +152,11 @@ export function providerSearches(fake: FakeUpstream, route: RouteFilter = {}, si
     && matchesRoute(request, route));
 }
 
+/** Station lookups in the providers' catalogues (Agil's geotree, Click and Book Plus's autocomplete). */
+export function stationLookups(fake: FakeUpstream): RecordedRequest[] {
+  return fake.requests((request) => request.op === "agil.locations" || request.op === "cbplus.locations");
+}
+
 /** Holds every provider search on `route` at the fake until `release`: a search that stays running. */
 export function holdProviderSearches(fake: FakeUpstream, route: RouteFilter): Gate {
   return fake.hold("*", (request) => (request.op === "agil.search" || request.op === "cbplus.search") && matchesRoute(request, route));

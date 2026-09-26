@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import type { Locator, Page } from "playwright";
-import { nextFrames, runSearch, waitForMotion, waitForResults, waitForSweep } from "./support/flows.ts";
+import { searchPayloads, startSearch } from "./support/api-client.ts";
+import { nextFrames, runSearch, waitForIdleCapacity, waitForMotion, waitForResults, waitForSweep } from "./support/flows.ts";
 import { defineSuite, type ContextOptions } from "./support/harness.ts";
 import type { OfferSpec } from "./support/fixtures.ts";
-import { addMonths, day, deskMonth, eventually, monthKey, providerSearches, TODAY } from "./support/scenario.ts";
+import { addMonths, day, deskMonth, eventually, monthKey, providerSearches, stationLookups, TODAY } from "./support/scenario.ts";
+import { adoptBrowserClientId } from "./support/sessions.ts";
 import {
   detail,
   duplicateIds,
@@ -16,6 +18,8 @@ import {
   migration,
   oneStopLabels,
   readResultCount,
+  readSuggestion,
+  readSuggestions,
   recordRemovedControls,
   results,
   scrollerOffset,
@@ -155,6 +159,76 @@ suite.test("on a phone the whole search runs through sheets, the back button clo
   /* One more back leaves the desk: no step of a closed sheet is in the way. */
   await page.goBack();
   await page.waitForURL(before);
+});
+
+suite.test("on a phone the station sheet draws its history as it draws its matches, and a keyboard chooses from it", async (scope) => {
+  const { fake, stack } = scope;
+  /* Three origins of this browser, the oldest first: PIU, which the providers'
+     catalogues name; AYP (Ayacucho), which only the desk's own list of certain
+     codes names; and CHM (Chimbote), which nothing names. */
+  const clientSessionId = "e2e-phone-station-history";
+  const api = await scope.api();
+  for (const [index, code] of ["PIU", "AYP", "CHM"].entries()) {
+    await startSearch(api, searchPayloads.exact(code, "LIM", day(80 + index), undefined, { clientSessionId }));
+  }
+  await waitForIdleCapacity(api);
+  /* Someone typed «pi» at the desk: the providers' answer is what it knows about PIU. */
+  await api.json("GET", "/api/locations?q=pi&limit=8");
+
+  const tracked = await scope.newContext({ ...PHONE, signedIn: true });
+  await adoptBrowserClientId(tracked.context, clientSessionId);
+  const page = await tracked.newPage();
+  await page.goto(stack.baseUrl);
+  await searchForm.location(page, "Origen").waitFor();
+  await tracked.apiSettled();
+  const lookupsBefore = stationLookups(fake).length;
+
+  /* The sheet opens on the history: a code alone, the city and country of the
+     desk's own list, and PIU as the providers named it. */
+  await searchForm.location(page, "Origen").tap();
+  const sheet = searchForm.locationSheet(page, "Origen");
+  await sheet.waitFor();
+  const recent = searchForm.suggestionGroup(page, "Recientes");
+  await recent.waitFor();
+  const history = await readSuggestions(recent);
+  assert.deepEqual(history, ["CHM", "AYP Ayacucho Ayacucho, Perú", "PIU Piura Piura, Perú"]);
+  await tracked.apiSettled();
+  assert.equal(stationLookups(fake).length, lookupsBefore, "opening the sheet asked a provider");
+  /* The keys are the same in both states: a phone shows none. */
+  assert.equal(await searchForm.suggestionKeys(page).filter({ visible: true }).count(), 0, "the history shows keys on a phone");
+
+  /* Two letters: the match draws PIU row for row as the history does. */
+  const input = searchForm.locationSheetInput(page, "Origen");
+  await input.fill("pi");
+  const piuraMatch = searchForm.suggestion(page, "PIU");
+  await piuraMatch.waitFor();
+  assert.equal(await readSuggestion(piuraMatch), history[2]);
+  assert.equal(await searchForm.suggestionKeys(page).filter({ visible: true }).count(), 0, "the matches show keys on a phone");
+
+  /* Back to the history, chosen from a keyboard: the third row, PIU, taken
+     the way a tap takes it, and the sheet closes. */
+  await input.fill("");
+  await recent.waitFor();
+  for (let press = 0; press < 3; press += 1) {
+    await page.keyboard.press("ArrowDown");
+  }
+  const third = recent.getByRole("option").nth(2);
+  await eventually(async () => assert.equal(await input.getAttribute("aria-activedescendant"), await third.getAttribute("id")), { timeoutMs: 2_000 });
+  assert.equal(await third.getAttribute("aria-selected"), "true");
+  await page.keyboard.press("Enter");
+  await sheet.waitFor({ state: "hidden" });
+  await eventually(async () => assert.match(await searchForm.location(page, "Origen").inputValue(), /^PIU\b/));
+
+  /* A match is taken from the keyboard the same way: the first is the one Enter takes. */
+  await searchForm.location(page, "Destino").tap();
+  const destinationSheet = searchForm.locationSheet(page, "Destino");
+  await destinationSheet.waitFor();
+  await searchForm.locationSheetInput(page, "Destino").fill("cu");
+  await searchForm.suggestionGroup(page, "Coincidencias").waitFor();
+  assert.match(await readSuggestion(searchForm.activeSuggestion(page)), /^CUZ\b/);
+  await page.keyboard.press("Enter");
+  await destinationSheet.waitFor({ state: "hidden" });
+  await eventually(async () => assert.match(await searchForm.location(page, "Destino").inputValue(), /^CUZ\b/));
 });
 
 /* ---- The in-between sizes ---- */

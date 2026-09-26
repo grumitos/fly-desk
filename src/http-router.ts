@@ -71,8 +71,9 @@ import {
 import { runProviderMatrixInWorker, runProviderSearchInWorker } from "./search-worker-client";
 import { collectTempArtifactDiagnostics } from "./temp-artifacts";
 import { getRuntime } from "./runtime";
-import { normalizeLocationUsageSessionId } from "./location-usage-store";
+import { normalizeLocationUsageSessionId, type LocationUsageSuggestionGroups } from "./location-usage-store";
 import { LOCATION_SUGGESTION_CACHE_MAX_QUERY_CHARS } from "./location-suggestion-cache";
+import { curatedLocationSuggestion } from "./core/location-display";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import { providerPublicFailureMessage } from "./provider-status";
 import {
@@ -1150,6 +1151,25 @@ function mergeLocationSuggestions(
   }
 
   return [...deduped.values()];
+}
+
+/* The station each code of the history names, so its rows are drawn as the
+   matches are: the provider answer the suggestion cache already holds, then
+   the list of certain codes, and otherwise nothing, which the panel draws as
+   the code alone rather than a guessed name. Read from what this process
+   holds, never from a provider: every idle screen asks for it. */
+function describeLocationUsageStations(
+  runtime: ReturnType<typeof getRuntime>,
+  { frequent, recent }: LocationUsageSuggestionGroups,
+): LocationSuggestion[] {
+  const codes = new Set([...recent.origin, ...recent.destination, ...frequent.origin, ...frequent.destination]);
+  const cached = runtime.locationSuggestions.findStations(codes);
+  return [...codes].flatMap((code) => {
+    const station = cached.get(code) ?? curatedLocationSuggestion(code);
+    return station
+      ? [{ code, city: station.city, country: station.country, countryCode: station.countryCode, type: station.type, label: station.label }]
+      : [];
+  });
 }
 
 function isTrustedApiRequest(request: Request): boolean {
@@ -3212,9 +3232,16 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
 
     const limit = integerParam(url.searchParams.get("limit"), 3, 1, 3);
     const clientSessionId = resolveLocationSuggestionSessionId(url.searchParams.get("clientSessionId"));
-    const { frequent, recent } = runtime.locationUsage.getUsageSuggestions(clientSessionId, limit);
+    const groups = runtime.locationUsage.getUsageSuggestions(clientSessionId, limit);
+    /* The lists stay lists of codes, which is all a page loaded before
+       `stations` existed can read; the stations ride beside them. */
     return json(
-      { suggestions: frequent, frequent, recent },
+      {
+        suggestions: groups.frequent,
+        frequent: groups.frequent,
+        recent: groups.recent,
+        stations: describeLocationUsageStations(runtime, groups),
+      },
       { headers: { "Cache-Control": "no-store" } },
     );
   }

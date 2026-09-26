@@ -1,4 +1,6 @@
 import { getBrowserClientSessionId } from "@/lib/browser-client-session"
+import { normalizeLocationSuggestions } from "@/lib/locations"
+import type { LocationSuggestion } from "@/types"
 
 type LocationUsageRole = "origin" | "destination"
 
@@ -7,12 +9,15 @@ export type LocationUsageSuggestions = Record<LocationUsageRole, string[]>
 export interface LocationUsageSuggestionGroups {
   frequent: LocationUsageSuggestions
   recent: LocationUsageSuggestions
+  /** The station a listed code names, where the server knows one; a code without is drawn alone. */
+  stations: ReadonlyMap<string, LocationSuggestion>
 }
 
 type LocationUsageApiResponse = {
   suggestions?: Partial<Record<LocationUsageRole, unknown>>
   frequent?: Partial<Record<LocationUsageRole, unknown>>
   recent?: Partial<Record<LocationUsageRole, unknown>>
+  stations?: unknown
 }
 
 function normalizeLocationUsageCode(value: unknown): string | undefined {
@@ -43,6 +48,28 @@ function normalizeCodes(input: unknown): string[] {
   return codes
 }
 
+function isStationCandidate(value: unknown): value is LocationSuggestion {
+  return Boolean(value) && typeof value === "object" && typeof (value as { code?: unknown }).code === "string"
+}
+
+/* A server from before `stations` sends none, and its codes are drawn alone:
+   the rows keep their anatomy and lose only the names. The stations pass
+   through the normalization the matches pass through, so one code reads the
+   same in both states of the panel. */
+function normalizeStations(input: unknown): Map<string, LocationSuggestion> {
+  const stations = new Map<string, LocationSuggestion>()
+  if (!Array.isArray(input)) {
+    return stations
+  }
+
+  for (const station of normalizeLocationSuggestions(input.filter(isStationCandidate))) {
+    if (station.code && !stations.has(station.code)) {
+      stations.set(station.code, station)
+    }
+  }
+  return stations
+}
+
 function normalizeLocationUsageSuggestions(input: unknown): LocationUsageSuggestionGroups {
   const payload = input && typeof input === "object" ? input as LocationUsageApiResponse : {}
   return {
@@ -54,6 +81,7 @@ function normalizeLocationUsageSuggestions(input: unknown): LocationUsageSuggest
       origin: normalizeCodes(payload.recent?.origin),
       destination: normalizeCodes(payload.recent?.destination),
     },
+    stations: normalizeStations(payload.stations),
   }
 }
 
@@ -74,5 +102,6 @@ export function emptyLocationUsageSuggestions(): LocationUsageSuggestionGroups {
   return {
     frequent: { origin: [], destination: [] },
     recent: { origin: [], destination: [] },
+    stations: new Map(),
   }
 }

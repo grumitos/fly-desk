@@ -147,6 +147,37 @@ that screen does, including while a field is being edited to correct a
 finished route (11 §2.4); a suggestion panel that opens covers it. It does not
 come back in the active screen, where it would compete with the results.
 
+## Rules for the station panel
+
+**One panel in both of its states.** Plate 2a draws one panel under Origen
+and Destino: with the field empty it lists «Recientes» and «Frecuentes» in the
+46px row the matches use, and from two letters (11 §2.1) «Coincidencias»
+replaces them. **Owner-requested** for the history: the two states share
+everything but their groups. Each group is a head with its count over its
+rows, every row is the station's type, its code, and its city over the detail
+line, and the keys («elegir», «navegar», «cerrar») stand at the foot in either
+state. On a desk the panel is a column at most 288px tall, or the height the
+window leaves below the field: the rows scroll between the heads, which stay
+over the rows they name, and the keys, which stay whole. The arrows bring the
+row they reach into view below its head, and `Enter` takes that row as a click
+or a tap does, so on a phone it also closes the sheet. A phone shows no keys in
+either state; its sheet is worked by touch.
+
+**A history row is named from what the web unit already holds.**
+`GET /api/location-usage-suggestions` answers `stations` beside its lists: for
+each code in them, the station a provider's answer in the suggestion cache
+(`src/location-suggestion-cache.ts`) names, from any query and any browser, the
+entry touched last winning; failing that, the city and country of
+`src/core/location-display.ts`, with no type, because that list does not say
+whether a code is a city or one of its airports; failing both, nothing, and the
+row draws the code alone rather than a guessed name. Opening the panel asks no
+provider. The server resolves the names because the cache lives in the unit
+that answers this route, while a page's own cache starts empty on every load.
+The lists stay arrays of codes, which is all a page loaded before `stations`
+existed reads, so a page left open across a deployment keeps its history; and
+a page left open across a rollback, whose server no longer sends `stations`,
+draws its codes alone.
+
 ## Rules for the results column
 
 **The list and its skeleton are one measurement.** Plate 4a asks for «never more
