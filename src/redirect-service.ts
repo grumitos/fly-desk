@@ -15,6 +15,7 @@ import {
 import { resolvePersistPath } from "./runtime-paths";
 import { hasAcceptedApiAccessToken } from "./service-auth";
 import { COMPLETED_SEARCH_SESSION_TTL_MS } from "./session-store";
+import { getSql, parseJsonPayload } from "./sqlite";
 import {
   hasValidRedirectSession,
   isTrustedLocalRequest,
@@ -184,27 +185,6 @@ async function withCostamarRedirectTotalTimeout<T>(promise: Promise<T>): Promise
     if (timeout) {
       clearTimeout(timeout);
     }
-  }
-}
-
-function parseJsonPayload<T>(payload: string | undefined): T | undefined {
-  if (!payload) {
-    return undefined;
-  }
-
-  try {
-    return JSON.parse(payload) as T;
-  } catch {
-    return undefined;
-  }
-}
-
-function getSql<T>(db: Database, sql: string, ...params: any[]): T | undefined {
-  const statement = db.prepare(sql);
-  try {
-    return statement.get(...params) as T | undefined;
-  } finally {
-    statement.finalize();
   }
 }
 
