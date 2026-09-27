@@ -89,6 +89,12 @@ thresholds are re-derived from this rule, not nudged.
   and the widest three-letter code (59.9). Pinned by «at 360 wide every mode
   fits, keeps its search action in reach, and names the stopover airport»
   (`test/e2e/mobile.e2e.ts`).
+- **The stacked card draws its provider from 384px of list.** The mark (18,
+  and an 8px gap) sits at the foot of the legs, centred on their lines, as the
+  desk row draws it at its end. Flexible's stops lane is the list less 298 (the
+  phone viewport's, the card's border and padding 50, and the legs' fixed
+  248), and it must still hold the widest code beside the mark: 298 + 26 +
+  59.9 makes 384. A 360 phone keeps its whole lane and draws no mark.
 
 Only the result row asks the list's width (`fdlist`); the migratory grid and
 the cards' entrance cascade answer the shell size, as the manual's master

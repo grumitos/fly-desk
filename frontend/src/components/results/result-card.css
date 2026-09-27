@@ -829,4 +829,32 @@
       display: none;
     }
   }
+
+  /* The provider mark comes back at the card's foot, as the desk row draws it,
+     where the stops lane can spare its 18px and an 8px gap. Flexible's lane is
+     the list less 298px (the viewport's, border's and padding's 50 and the
+     legs' fixed 248), and «1 esc · MMM» needs 59.9 of it, so 384px of list is
+     the least that holds both; a 360 phone keeps the whole lane. Centred on
+     the leg lines, below the 9px of rule and padding over them, within a
+     one-leg card's height. */
+  @container fdlist (min-width: 384px) and (max-width: 786.98px) {
+    .fd-card .fd-card__provider {
+      display: grid;
+      grid-column: 3;
+      grid-row: 2;
+      align-self: center;
+      margin: 8px 0 -1px;
+    }
+
+    .fd-card .fd-card__provider,
+    .fd-card .fd-card__provider img,
+    .fd-card .fd-card__provider span {
+      width: var(--fd-icon-18);
+      height: var(--fd-icon-18);
+    }
+
+    .fd-card .fd-card__legs {
+      padding-right: calc(var(--fd-icon-18) + 8px);
+    }
+  }
 }
