@@ -593,6 +593,13 @@
       row-gap: 6px;
     }
 
+    /* The first card keeps a card's gap from the rule under the list's
+       header instead of touching it. A phone draws no rule and sets its own
+       padding (index.css). */
+    .fd-list-viewport {
+      padding-top: 6px;
+    }
+
     .fd-card--head {
       display: none;
     }
