@@ -101,27 +101,24 @@ export function DetailPanel({
   const quoteKey = offer && request
     ? `${quotationSessionId ?? "snapshot"}:${quotationOfferId}:${request.origin}:${request.destination}:${request.departureDate ?? request.departureStart ?? ""}:${request.returnDate ?? request.returnStart ?? ""}`
     : undefined
-  const copyKey = quoteKey ? `${quoteKey}:${migrationPlan ? "migration" : "standard"}` : undefined
+  const copyKey = quoteKey ? quotationCopyKey(quoteKey, migrationPlan) : undefined
   const preparedQuotation = useMemo<QuotationState | null>(() => {
     return offer && request && copyKey
       ? composeQuotation(offer, request, copyKey, migrationPlan)
       : null
   }, [copyKey, migrationPlan, offer, request])
-  const verifiedQuotationState = useMemo<QuotationState | null>(() => {
-    if (!request || !copyKey || !verifiedQuotation || verifiedQuotation.quoteKey !== quoteKey) return null
-    if (verifiedQuotation.migrationPlan === migrationPlan) {
-      return { key: copyKey, text: verifiedQuotation.commercialText }
-    }
-
-    /* 05 §5: the toggle rewrites the text live, from the confirmed offer and
-       the rate that came with it, never from another offer's rate. */
-    return composeQuotation(verifiedQuotation.offer, request, copyKey, migrationPlan)
-  }, [copyKey, migrationPlan, quoteKey, request, verifiedQuotation])
+  const verifiedQuotationState = useMemo<QuotationState | null>(() => (
+    request && copyKey && verifiedQuotation && verifiedQuotation.quoteKey === quoteKey
+      ? quotedText(verifiedQuotation, request, copyKey, migrationPlan)
+      : null
+  ), [copyKey, migrationPlan, quoteKey, request, verifiedQuotation])
   const displayOffer = verifiedQuotation && verifiedQuotation.quoteKey === quoteKey
     ? verifiedQuotation.offer
     : offer
-  /* An unconfirmed quotation is never shown or copied: a fare that does not
-     exist reaches the customer as a price the agency must honour. */
+  /* Only the server's quote is shown or copied, never the text composed here:
+     it quotes a fare fresh from its search as it is and confirms an older one
+     with the provider first, because a fare that no longer exists reaches the
+     customer as a price the agency must honour. */
   const quotationFailed = Boolean(quoteKey) && quotationFailureKey === quoteKey
   const activeQuotation = visibleQuotationKey === quoteKey && !quotationFailed
     ? verifiedQuotationState
@@ -183,6 +180,15 @@ export function DetailPanel({
   const copyQuotationText = useCallback(async (key: string, text: string) => {
     if (await writeClipboardText(text)) markCopied(key)
   }, [markCopied])
+
+  /* The quote's own switch copies the text it rewrites, so the clipboard
+     always holds the text on screen. */
+  const toggleQuotedMigrationPlan = (nextChoice: boolean) => {
+    setMigrationPlanChoice(nextChoice)
+    if (!request || !quoteKey || verifiedQuotation?.quoteKey !== quoteKey) return
+    const next = quotedText(verifiedQuotation, request, quotationCopyKey(quoteKey, nextChoice), nextChoice)
+    if (!next.error) void copyQuotationText(next.key, next.text)
+  }
 
   const handleQuotation = async () => {
     if (
@@ -400,7 +406,7 @@ export function DetailPanel({
           migrationPlan={migrationPlan}
           copied={copied}
           canOpenProvider={Boolean(purchasePath)}
-          onToggleMigrationPlan={setMigrationPlanChoice}
+          onToggleMigrationPlan={toggleQuotedMigrationPlan}
           onCopy={() => copyQuotationText(activeQuotation.key, activeQuotation.text)}
           onOpenProvider={() => void handlePurchasePath()}
           onClose={() => setVisibleQuotationKey(null)}
@@ -483,17 +489,21 @@ export function DetailPanel({
           </p>
         )}
         <div className="fd-detail-action-row">
-          {/* The accessible name contains the visible word (WCAG 2.5.3). */}
-          <label htmlFor={migrationSwitchId} className="fd-detail-migration">
-            <Switch
-              id={migrationSwitchId}
-              className="fd-detail-migration-switch"
-              checked={migrationPlan}
-              aria-label="Paquete migratorio"
-              onCheckedChange={setMigrationPlanChoice}
-            />
-            <span>Migratorio</span>
-          </label>
+          {/* The migratory text is chosen in the quote, whose switch rewrites
+              the text it shows; a phone has no quote panel, so its sheet keeps
+              the switch. The accessible name contains the visible word (WCAG 2.5.3). */}
+          {mobileDirect && (
+            <label htmlFor={migrationSwitchId} className="fd-detail-migration">
+              <Switch
+                id={migrationSwitchId}
+                className="fd-detail-migration-switch"
+                checked={migrationPlan}
+                aria-label="Paquete migratorio"
+                onCheckedChange={setMigrationPlanChoice}
+              />
+              <span>Migratorio</span>
+            </label>
+          )}
           <div className="fd-detail-action-group">
             {purchasePath && (
               <Button
@@ -603,6 +613,23 @@ function composeQuotation(
       error: true,
     }
   }
+}
+
+function quotationCopyKey(quoteKey: string, migrationPlan: boolean): string {
+  return `${quoteKey}:${migrationPlan ? "migration" : "standard"}`
+}
+
+/* 05 §5: the switch rewrites the quote live, from the quoted offer and the
+   rate that came with it, never from another offer's rate. */
+function quotedText(
+  quotation: VerifiedQuotation,
+  request: SearchRequest,
+  key: string,
+  migrationPlan: boolean,
+): QuotationState {
+  return quotation.migrationPlan === migrationPlan
+    ? { key, text: quotation.commercialText }
+    : composeQuotation(quotation.offer, request, key, migrationPlan)
 }
 
 function readMigrationPlanChoice(): boolean | null {

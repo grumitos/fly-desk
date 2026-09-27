@@ -14,6 +14,7 @@ import type {
   SearchRequest as CoreSearchRequest,
   SearchResponse as CoreSearchResponse,
   Segment as CoreSegment,
+  TimeOfDayPeriod,
 } from "../../../src/core/types"
 import { SORT_MODES } from "../../../src/core/types"
 
@@ -52,6 +53,8 @@ export interface SearchRequest {
   checkedBaggageRequired?: boolean
   baggageRequired?: boolean
   includedAirlineCodes?: string[]
+  departurePeriods?: TimeOfDayPeriod[]
+  arrivalPeriods?: TimeOfDayPeriod[]
   migrationMonths?: string[]
 }
 
@@ -200,6 +203,8 @@ export interface MatrixCell extends Omit<
 export { SORT_MODES }
 
 export type SortMode = (typeof SORT_MODES)[number]
+
+export type { TimeOfDayPeriod }
 
 export function isSortMode(value: unknown): value is SortMode {
   return SORT_MODES.includes(value as SortMode)

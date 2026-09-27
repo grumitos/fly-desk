@@ -234,11 +234,12 @@ export function locationUses(appDataDir: string): Map<string, number> {
 
 /* Runs a script against a stack database with Bun's SQLite, the engine that
    wrote it. A subprocess, so the test process never holds a handle on a file a
-   service is writing. */
-function runSqliteScript(script: string, action: string): string {
+   service is writing. `input` is its stdin. */
+function runSqliteScript(script: string, action: string, input?: string): string {
   const result = spawnSync(process.env.BUN_EXECUTABLE_PATH?.trim() || "bun", ["--no-env-file", "-e", script], {
     encoding: "utf8",
     windowsHide: true,
+    input,
     env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP },
   });
   if (result.status !== 0) {
@@ -262,6 +263,8 @@ export function querySqlite<T>(dbPath: string, sql: string, params: readonly unk
 /**
  * Writes to a stack database the way an earlier release or an operator would:
  * each statement in order, waiting out a service's lock as the services do.
+ * The statements travel on stdin: a whole job's row would not fit a Windows
+ * command line.
  */
 export function writeSqlite(dbPath: string, statements: ReadonlyArray<{ sql: string; params?: readonly unknown[] }>): void {
   runSqliteScript([
@@ -269,9 +272,9 @@ export function writeSqlite(dbPath: string, statements: ReadonlyArray<{ sql: str
     `const db = new Database(${JSON.stringify(dbPath)});`,
     "try {",
     "  db.run('PRAGMA busy_timeout = 5000;');",
-    `  for (const { sql, params } of ${JSON.stringify(statements)}) db.run(sql, ...(params ?? []));`,
+    "  for (const { sql, params } of JSON.parse(require('node:fs').readFileSync(0, 'utf8'))) db.run(sql, ...(params ?? []));",
     "} finally { db.close(); }",
-  ].join("\n"), "write");
+  ].join("\n"), "write", JSON.stringify(statements));
 }
 
 /** How big a database file is and how much of it is free, read the way `src/session-store.ts` reads it. */

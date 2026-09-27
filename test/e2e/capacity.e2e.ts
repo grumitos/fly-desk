@@ -20,7 +20,7 @@ import {
   type SearchCapacity,
   type SearchJob,
 } from "./support/api-client.ts";
-import { runSearch, startedJob, waitForIdleCapacity, waitForResults } from "./support/flows.ts";
+import { ageStoredFares, runSearch, startedJob, waitForIdleCapacity, waitForResults } from "./support/flows.ts";
 import { defineSuite } from "./support/harness.ts";
 import { fakeCbplusToken, FAKE_CBPLUS_TERMINAL_ID, type OfferSpec } from "./support/fixtures.ts";
 import type { RecordedRequest } from "./support/fake-upstream.ts";
@@ -477,7 +477,6 @@ suite.test("a renewed Click and Book Plus token file reaches searches and redire
   fake.setFlights("cbplus", { origin: "LIM", destination: "CUZ" }, [
     { outbound: ["LA2047 LIM-CUZ 07:15-08:40"], price: 151.3, baggage: { carryOn: true, checked: 1 }, brand: "Plus" },
   ]);
-  const pids = { runner: stack.pid("runner"), web: stack.pid("web"), redirect: stack.pid("redirect") };
   const api = await scope.api();
   const { page } = await scope.signedInPage("/");
   const searchOn = async (departure: string): Promise<string> => {
@@ -505,8 +504,10 @@ suite.test("a renewed Click and Book Plus token file reaches searches and redire
     assert.deepEqual(searchTokens(), [TOKEN_A]);
     assert.equal(await redirectTokenOf(firstJob), TOKEN_A);
     assert.deepEqual(brandTokens(), [TOKEN_A]);
-    const cbplusWorker = fake.requests("cbplus.search")[0]!.caller?.pid;
-    assert.ok(cbplusWorker);
+    /* A job lives for hours and a token for one: the job is made older than a
+       quote takes as it is before the renewal, and nothing restarts after. */
+    await ageStoredFares(stack, firstJob);
+    const pids = { runner: stack.pid("runner"), web: stack.pid("web"), redirect: stack.pid("redirect") };
 
     /* The renewal: a new token for the same terminal, written over the old one. */
     writeFileSync(TOKEN_FILE, tokenB);
@@ -516,9 +517,11 @@ suite.test("a renewed Click and Book Plus token file reaches searches and redire
     assert.equal(searchTokens().at(-1), tokenB, "the search after the renewal still used the old token");
     assert.equal(await redirectTokenOf(secondJob), tokenB, "the redirect after the renewal still carries the old token");
     assert.equal(brandTokens().at(-1), tokenB, "the redirect service validated the old token");
+    const cbplusWorker = fake.requests("cbplus.search").at(-1)!.caller?.pid;
+    assert.ok(cbplusWorker);
 
-    /* A job lives for hours and a token for one: quoting a fare of the job
-       searched before the renewal asks the provider with the renewed token. */
+    /* Quoting a fare of the job searched before the renewal asks the
+       provider with the renewed token. */
     const firstFare = searchOffers(await readSearchJob(api, firstJob)).find((offer) => offer.providerSource === "costamar");
     assert.ok(firstFare, "no Click and Book Plus fare");
     const searchesBeforeQuote = fake.requests("cbplus.search").length;

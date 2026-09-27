@@ -1485,12 +1485,14 @@
     color: var(--color-faint);
   }
 
+  /* As much air under the actions as over them: the column and the side
+     sheet end at the foot's own edge. */
   .fd-detail-footer {
     display: grid;
     flex-shrink: 0;
     gap: 10px;
     margin-top: 12px;
-    padding: 12px 0 0;
+    padding: 12px 0;
     border-top: 1px solid var(--color-rule);
   }
 
@@ -1502,12 +1504,12 @@
   .fd-detail-action-row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 8px;
   }
 
-  /* Flush with the column's edge and without a hover fill, as in both
-     sheets: the 303px column needs the room for «Copiado». */
+  /* The phone's sheet only, which has no quote panel to hold the switch:
+     flush with the sheet's edge and without a hover fill. */
   .fd-detail-migration {
     display: flex;
     height: var(--fd-control-standard);
@@ -1694,16 +1696,6 @@
       min-width: 0;
       flex: 1;
       gap: 8px;
-    }
-
-    .fd-detail-migration {
-      height: var(--fd-control-touch-sm);
-    }
-
-    .fd-detail-migration-switch {
-      --fd-switch-width: 30px;
-      --fd-switch-height: 17px;
-      --fd-switch-knob: 13px;
     }
 
     .fd-detail-quote-action {

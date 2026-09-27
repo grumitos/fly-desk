@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import type { Page, Response as PlaywrightResponse } from "playwright";
+import { QUOTATION_FARE_FRESHNESS_MS } from "../../../src/core/quotation.ts";
 import { readCapacity, type ApiSession, type MatrixJob, type SearchJob } from "./api-client.ts";
-import { eventually } from "./scenario.ts";
+import { eventually, querySqlite, writeSqlite } from "./scenario.ts";
+import type { Stack } from "./stack.ts";
 import { readCards, readResultCount, results, searchForm, type CardReading } from "./ui.ts";
 
 /*
@@ -32,6 +35,43 @@ export async function startedJob<T extends SearchJob | MatrixJob = SearchJob>(
   const response = await answered;
   assert.equal(response.status(), 200, `${path} answered ${response.status()}`);
   return await response.json() as T;
+}
+
+type StoredFare = { quotationPreparedAt?: string };
+
+/**
+ * Makes a finished job's fares older than a quote takes as they are, the way
+ * an operator would: with the runner stopped, the job's stored row has each
+ * fare's `quotationPreparedAt`, when its search answered, moved a minute past
+ * the window, and the runner reads the row back as it starts. A quote of one
+ * of them then confirms it with the provider first.
+ */
+export async function ageStoredFares(stack: Stack, jobId: string): Promise<void> {
+  const dbPath = join(stack.appDataDir, "fly-desk-cache.sqlite");
+  const storedRow = () => querySqlite<{ kind: string; payload: string }>(
+    dbPath,
+    "SELECT 'search_jobs' AS kind, payload FROM search_jobs WHERE id = ?1 UNION ALL SELECT 'matrix_jobs' AS kind, payload FROM matrix_jobs WHERE id = ?1",
+    [jobId],
+  )[0];
+  /* A finished job reaches its row on the store's write debounce. */
+  await eventually(() => {
+    assert.equal((JSON.parse(storedRow()?.payload ?? "{}") as { status?: string }).status, "completed");
+  }, { message: `job ${jobId} stored as finished` });
+
+  await stack.restart("runner", {
+    beforeLaunch: () => {
+      const row = storedRow()!;
+      const job = JSON.parse(row.payload) as { allOffers?: StoredFare[]; cells?: Array<{ offer?: StoredFare }> };
+      const fares = [...job.allOffers ?? [], ...(job.cells ?? []).flatMap((cell) => cell.offer ? [cell.offer] : [])];
+      for (const fare of fares) {
+        if (fare.quotationPreparedAt) {
+          fare.quotationPreparedAt = new Date(Date.parse(fare.quotationPreparedAt) - QUOTATION_FARE_FRESHNESS_MS - 60_000).toISOString();
+        }
+      }
+      assert.ok(fares.some((fare) => fare.quotationPreparedAt), `job ${jobId} holds no fare prepared for quoting`);
+      writeSqlite(dbPath, [{ sql: `UPDATE ${row.kind} SET payload = ? WHERE id = ?`, params: [JSON.stringify(job), jobId] }]);
+    },
+  });
 }
 
 /** Presses «Buscar» and returns the job it started. */

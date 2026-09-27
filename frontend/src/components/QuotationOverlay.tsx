@@ -12,7 +12,8 @@ import { QUOTATION_FARE_STALE_MINUTES } from "../../../src/core/quotation"
  * Plate 1h — "Cotización lista para pegar": the text exactly as it will be
  * pasted, the route and passengers to verify it against, the migration switch
  * next to the text it rewrites, and the age of the fare. It only ever opens
- * over a fare the provider confirmed; a phone has no panel (05 §6).
+ * over the server's quote — a fare fresh from its search, or one the provider
+ * confirmed; a phone has no panel (05 §6).
  */
 
 /* The fare age is stated in minutes, so it is recomputed at half that. */

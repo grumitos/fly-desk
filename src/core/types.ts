@@ -96,6 +96,14 @@ export interface SearchLeg {
   maxNights?: number;
 }
 
+/*
+ * The parts of a day the rail filters the outbound by, read on the airports'
+ * own clocks: mañana 05:00–11:59, tarde 12:00–17:59, noche 18:00–04:59.
+ */
+export const TIME_OF_DAY_PERIODS = ["morning", "afternoon", "night"] as const;
+
+export type TimeOfDayPeriod = (typeof TIME_OF_DAY_PERIODS)[number];
+
 export interface SearchFilters {
   nonStop?: boolean;
   maxStops?: number;
@@ -109,6 +117,10 @@ export interface SearchFilters {
   maxDepartureMinutes?: number;
   minArrivalMinutes?: number;
   maxArrivalMinutes?: number;
+  /** The outbound leaves in one of these parts of the day. */
+  departurePeriods?: TimeOfDayPeriod[];
+  /** The outbound lands in one of these parts of the day. */
+  arrivalPeriods?: TimeOfDayPeriod[];
   carryOnRequired?: boolean;
   checkedBaggageRequired?: boolean;
   baggageRequired?: boolean;

@@ -8,7 +8,7 @@ import {
   type QuotationAnswer,
   type SearchJob,
 } from "./support/api-client.ts";
-import { readWholeList, rowKey, runSearch, waitForMotion, waitForResults } from "./support/flows.ts";
+import { ageStoredFares, readWholeList, rowKey, runSearch, startedJob, waitForMotion, waitForResults } from "./support/flows.ts";
 import { defineSuite, type TestScope } from "./support/harness.ts";
 import { fakeCbplusToken, FAKE_CBPLUS_TERMINAL_ID, type OfferSpec, type SearchQuery } from "./support/fixtures.ts";
 import {
@@ -43,6 +43,7 @@ import {
   signInThroughGate,
   textFontFamilies,
   topBar,
+  type DayPart,
 } from "./support/ui.ts";
 
 /*
@@ -174,21 +175,24 @@ suite.test("a shared round-trip link survives the sign-in gate and carries the s
   assert.equal(await results.sort(page, "duración").getAttribute("aria-checked"), "true");
   await eventually(async () => assert.deepEqual((await readCards(page)).map((card) => card.amount), [689, 540]));
 
-  /* Detail and quotation: the provider is asked again, and the text quotes
-     the fare per adult. */
+  /* Detail and quotation: a fare fresh from its search is quoted at once, as
+     the list has it, with no provider asked; the text quotes the fare per
+     adult, and the quote says how old the fare is. */
   await results.card(page, /Click and Book Plus$/).click();
   const offerPanel = detail.surface(page);
   await offerPanel.waitFor();
-  const cbplusBefore = fake.requests("cbplus.search").length;
+  const requestsBefore = fake.requests().length;
   await detail.quote(offerPanel).click();
   const quoteDialog = quotation.dialog(page);
   await quoteDialog.waitFor();
   /* The list, the offer and the quotation set words and figures in one family. */
   assert.deepEqual((await textFontFamilies(page)).filter((family) => !family.startsWith("Inter")), [], "text set outside Inter");
-  assert.equal(fake.requests("cbplus.search").length, cbplusBefore + 1, "the quotation revalidated the fare with the provider");
-  const revalidation = fake.requests("cbplus.search").at(-1)!;
-  assert.equal(revalidation.query?.departureDate, departure);
-  assert.equal(revalidation.query?.returnDate, returning);
+  assert.deepEqual(
+    fake.requests().slice(requestsBefore).filter((request) => request.op !== "airlineMark").map((request) => request.op),
+    [],
+    "quoting a fare fresh from its search asked a provider",
+  );
+  assert.match(await quotation.fareAge(page).innerText(), /^Tarifa preparada hace menos de 1 min/);
   const quoteText = await quoteDialog.innerText();
   assert.match(quoteText, /US\$\s*689(?:\.00)? por adulto/);
   await quotation.close(page).click();
@@ -247,6 +251,140 @@ suite.test("a shared round-trip link survives the sign-in gate and carries the s
   assert.ok(bodies.length > 0);
   assert.deepEqual(bodies.filter((entry) => entry.body.includes(CBPLUS_TOKEN)).map((entry) => entry.url), [], "the token reached an /api answer");
   assert.ok(cbplusLocation.searchParams.get("token") === CBPLUS_TOKEN, "the 302 is where the token belongs");
+});
+
+/* LIM–MAD one way: an Iberia ticket whose first flight Avianca markets and
+   flies, and an Avianca ticket on Avianca's own flights. */
+const LIM_MAD_TICKETS: OfferSpec[] = [
+  { outbound: ["AV50 LIM-BOG 04:55-08:30", "IB6588 BOG-MAD 12:30-05:55+1"], price: 890, baggage: { carryOn: true, checked: 1 }, validatingCarrier: "IB" },
+  { outbound: ["AV26 LIM-BOG 09:00-12:35", "AV10 BOG-MAD 15:00-08:25+1"], price: 910, baggage: { carryOn: true, checked: 1 } },
+];
+
+suite.test("an airline's filter keeps the fares it tickets, not those whose first flight it only markets, and the card names the ticketing airline", async (scope) => {
+  const { stack } = scope;
+  scope.fake.setFlights("cbplus", { origin: "LIM", destination: "MAD" }, LIM_MAD_TICKETS);
+  const { page } = await scope.signedInPage("/");
+  const job = await startedJob<SearchJob>(page, async () => {
+    await page.goto(`${stack.baseUrl}${searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "MAD", departure: day(66) })}`);
+  });
+  await waitForResults(page, 2);
+
+  /* As the provider sends it: Iberia tickets the fare whose first flight Avianca markets. */
+  const interline = searchOffers(await readSearchJob(await scope.api(), job.searchJobId)).find((offer) => offer.price.total.amount === 890);
+  assert.deepEqual([interline?.validatingCarrier, interline?.mainCarrier], ["IB", "AV"]);
+  assert.deepEqual(
+    (await readCards(page)).map((card) => `${card.airline} ${card.amount}`).sort(),
+    ["Avianca 910", "Iberia 890"],
+    "a card names an airline that does not ticket its fare",
+  );
+
+  await filters.airline(page, "Avianca").click();
+  await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: 1, total: 2 }));
+  assert.deepEqual((await readCards(page)).map((card) => `${card.airline} ${card.amount}`), ["Avianca 910"], "Avianca's filter kept a fare Iberia tickets");
+  await filters.airline(page, "Avianca").click();
+  await filters.airline(page, "Iberia").click();
+  await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: 1, total: 2 }));
+  assert.deepEqual((await readCards(page)).map((card) => `${card.airline} ${card.amount}`), ["Iberia 890"]);
+  assert.equal(new URL(page.url()).searchParams.get("airlines"), "IB");
+});
+
+/* LIM–MAD and back in January, when Madrid runs six hours ahead: Agil sends
+   wall clocks with no offset and Click and Book Plus stamps -05:00 on Madrid's
+   too. Every return lands at 05:40, so a filter that read the return would
+   find every fare landing in the morning. In price order: */
+const MAD_RETURN = "IB6651 MAD-LIM 23:55-05:40+1";
+const LIM_MAD_TIMES_AGIL: OfferSpec[] = [
+  { outbound: ["IB6650 LIM-MAD 06:30-00:55+1"], inbound: [MAD_RETURN], price: 910, gds: 0 },
+  { outbound: ["LA2480 LIM-MAD 13:10-07:35+1"], inbound: [MAD_RETURN], price: 920, gds: 1 },
+  { outbound: ["AV10 LIM-MAD 05:00-23:30"], inbound: [MAD_RETURN], price: 930, gds: 3 },
+];
+const LIM_MAD_TIMES_CBPLUS: OfferSpec[] = [
+  { outbound: ["UX176 LIM-MAD 19:45-14:10+1"], inbound: [MAD_RETURN], price: 940 },
+  { outbound: ["IB6652 LIM-MAD 04:59-23:05"], inbound: [MAD_RETURN], price: 950 },
+];
+
+suite.test("the rail keeps the fares whose outbound leaves and lands in the parts of the day chosen, on the airports' clocks, and the choice travels as the other filters do", async (scope) => {
+  const { fake } = scope;
+  fake.setFlights("agil", { origin: "LIM", destination: "MAD" }, LIM_MAD_TIMES_AGIL);
+  fake.setFlights("cbplus", { origin: "LIM", destination: "MAD" }, LIM_MAD_TIMES_CBPLUS);
+  const { page } = await scope.signedInPage(searchLink({ mode: "exact", trip: "round-trip", origin: "LIM", destination: "MAD", departure: day(70), return: day(77) }));
+  await waitForResults(page, 5);
+  const departures = async () => (await readCards(page)).map((card) => card.legs[0]!.departs);
+  const toggle = async (time: "Salida" | "Llegada", part: DayPart) => filters.period(page, time, part).click();
+
+  /* Within «Salida» the parts of the day add up; 05:00 is morning, 04:59 night. */
+  await toggle("Salida", "Mañana");
+  await eventually(async () => assert.deepEqual(await departures(), ["06:30", "05:00"]));
+  assert.equal(await filters.period(page, "Salida", "Mañana").getAttribute("aria-pressed"), "true");
+  await toggle("Salida", "Tarde");
+  await eventually(async () => assert.deepEqual(await departures(), ["06:30", "13:10", "05:00"]));
+  assert.equal(new URL(page.url()).searchParams.get("departureTime"), "morning,afternoon");
+
+  /* «Llegada» reads the outbound's landing on Madrid's own clock: 00:55 is
+     night, whatever a UTC reading of Agil's wall clock would say. */
+  await toggle("Salida", "Mañana");
+  await toggle("Salida", "Tarde");
+  await toggle("Llegada", "Mañana");
+  await eventually(async () => assert.deepEqual(await departures(), ["13:10"]));
+  await toggle("Llegada", "Mañana");
+
+  /* The groups narrow each other, and 14:10 stamped -05:00 is still afternoon. */
+  await toggle("Salida", "Noche");
+  await toggle("Llegada", "Tarde");
+  await eventually(async () => assert.deepEqual(await departures(), ["19:45"]));
+  assert.equal((await readCards(page))[0]!.legs[0]!.arrives, "14:10");
+
+  /* Nothing leaves in the morning and lands in the afternoon: the filter to blame is named. */
+  await toggle("Salida", "Noche");
+  await toggle("Salida", "Mañana");
+  await results.emptyTitle(page, "Ningún vuelo cumple los dos filtros").waitFor();
+  await results.emptyText(page, "El filtro de llegada tarde es el que descarta más.").waitFor();
+  await results.emptyAction(page, "Quitar «Llegada tarde»").click();
+  await eventually(async () => assert.deepEqual(await departures(), ["06:30", "05:00"]));
+
+  /* It travels as the other filters do: in the search the backend keeps, in
+     the tab's view and in the link. */
+  const job = await runSearch<SearchJob & { request?: { filters?: Record<string, unknown> } }>(page);
+  assert.deepEqual(job.request?.filters?.departurePeriods, ["morning"]);
+  assert.equal(job.request?.filters?.arrivalPeriods, undefined);
+  await waitForResults(page, 5);
+  const view = await page.evaluate(() => sessionStorage.getItem("fly-desk:workspace-preferences:v1"));
+  assert.deepEqual((JSON.parse(view ?? "{}") as { filters?: Record<string, unknown> }).filters?.departurePeriods, ["morning"]);
+  const shared = new URL(page.url());
+  const { page: opened } = await scope.signedInPage(`${shared.pathname}${shared.search}`);
+  await waitForResults(opened, 5);
+  assert.equal(await filters.period(opened, "Salida", "Mañana").getAttribute("aria-pressed"), "true");
+  assert.deepEqual((await readCards(opened)).map((card) => card.legs[0]!.departs), ["06:30", "05:00"]);
+});
+
+suite.test("the migratory text is chosen in the quote, whose switch rewrites the text it shows and copies it, and the offer column keeps only its actions", async (scope) => {
+  scope.fake.setFlights("cbplus", { origin: "LIM", destination: "MIA" }, LIM_MIA_CBPLUS);
+  const link = searchLink({ mode: "exact", trip: "round-trip", origin: "LIM", destination: "MIA", departure: day(36), return: day(43) });
+  const { page } = await scope.signedInPage(link, { clipboard: true });
+  /* A Windows clipboard hands text back with CRLF line ends. */
+  const clipboard = async () => (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n");
+  await waitForResults(page, 2);
+  await results.card(page, /USD 689\.00 total/).click();
+  const panel = detail.surface(page);
+  await detail.quote(panel).waitFor();
+  assert.equal(await detail.migration(panel).count(), 0, "the offer column still holds a migratory switch");
+
+  await detail.quote(panel).click();
+  const text = quotation.text(page);
+  await text.waitFor();
+  const standard = await text.textContent() ?? "";
+  assert.doesNotMatch(standard, /PAQUETE MIGRATORIO/);
+  await eventually(async () => assert.equal(await clipboard(), standard));
+
+  /* Each way, the clipboard holds the text on screen and the copy says so. */
+  for (const [checked, pattern] of [[true, /^PAQUETE MIGRATORIO MIAMI/], [false, /^COTIZACI[OÓ]N BOLETO A[EÉ]REO/]] as const) {
+    await quotation.migration(page).click();
+    assert.equal(await quotation.migration(page).isChecked(), checked);
+    await eventually(async () => assert.match(await text.textContent() ?? "", pattern));
+    const shown = await text.textContent() ?? "";
+    await eventually(async () => assert.equal(await clipboard(), shown), { message: "the clipboard does not hold the text the quote shows" });
+    await eventually(async () => assert.equal(await quotation.copy(page).innerText(), "Copiado"));
+  }
 });
 
 /* ---- The flexible round trip: `/api/matrix`, one cell per departure day ---- */
@@ -382,8 +520,10 @@ suite.test("a flexible round trip fills in cell by cell, keeps the cards it drew
     );
   }
 
-  /* The provider now asks 603.50 for the 598 fare: the quote goes back to
-     it, and both the card and the text carry the new figure. */
+  /* Past the window a fare is no longer quoted as the list has it, and the
+     provider now asks 603.50 for the 598 fare: the quote goes back to it,
+     and both the card and the text carry the new figure. */
+  await ageStoredFares(scope.stack, started.matrixJobId);
   cbplusFares.set(MATRIX_DAYS[1], 603.5);
   const cbplusBefore = fake.requests("cbplus.search").length;
   await results.card(page, /USD 598\.00 total/).click();
@@ -423,8 +563,9 @@ suite.test("a flexible round trip fills in cell by cell, keeps the cards it drew
 });
 
 /**
- * Quotes the fare on `card` from its panel, then quotes it again. The fare was
- * confirmed a moment ago, so the second quote reuses it. Returns the first
+ * Quotes the fare on `card` from its panel once its search is older than the
+ * window, which confirms it with the provider, then quotes it again. The fare
+ * was confirmed a moment ago, so the second quote reuses it. Returns the first
  * answer and the quoted offer as the job keeps it.
  */
 async function quoteTwice(
@@ -433,14 +574,23 @@ async function quoteTwice(
   fares: number,
   card: RegExp,
 ): Promise<{ answer: QuotationAnswer; stored: CanonicalOffer | undefined }> {
-  const { fake } = scope;
-  const { tracked, page } = await scope.signedInPage(link);
+  const { fake, stack } = scope;
+  const { tracked, page } = await scope.signedInPage("/");
+  const started = await startedJob<SearchJob>(page, async () => {
+    await page.goto(`${stack.baseUrl}${link}`);
+  });
   await waitForResults(page, fares);
+  await ageStoredFares(stack, started.searchJobId);
+  const searched = fake.requests("cbplus.search").length;
   await results.card(page, card).click();
   const panel = detail.surface(page);
+  /* Read as it arrives: a body the restart cut off would never finish. */
+  const answered = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/quotation");
   await detail.quote(panel).click();
   const quoteDialog = quotation.dialog(page);
   await quoteDialog.waitFor();
+  const answer = await (await answered).json() as QuotationAnswer;
+  assert.equal(fake.requests("cbplus.search").length, searched + 1, "the first quote of an older fare did not confirm it with the provider");
   await quotation.close(page).click();
   await quoteDialog.waitFor({ state: "hidden" });
   const calls = fake.requests("cbplus.search").length;
@@ -449,10 +599,8 @@ async function quoteTwice(
   await detail.quote(panel).click();
   await quoteDialog.waitFor();
   assert.equal(fake.requests("cbplus.search").length, calls, "the second quote asked the provider again");
-  const answers = (await tracked.apiBodies()).filter((entry) => new URL(entry.url).pathname === "/api/quotation");
-  assert.equal(answers.length, 2);
+  assert.equal(tracked.apiRequests.filter((request) => new URL(request.url).pathname === "/api/quotation").length, 2);
 
-  const answer = JSON.parse(answers[0]!.body) as QuotationAnswer;
   const job = await readSearchJob(await scope.api(), answer.searchSessionId);
   return { answer, stored: searchOffers(job).find((offer) => offer.id === answer.offer.id) };
 }

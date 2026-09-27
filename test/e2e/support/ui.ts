@@ -218,6 +218,10 @@ export const results = {
   partialPill: (page: Page) => results.headerLine(page).getByText("Parcial", { exact: true }),
   stoppedPill: (page: Page) => results.headerLine(page).getByText("Detenida", { exact: true }),
   emptyTitle: (page: Page, title: string) => page.getByRole("heading", { name: title, level: 3 }),
+  /** What an empty list says, by its words: «… El filtro de llegada tarde es el que descarta más.» */
+  emptyText: (page: Page, text: string) => page.getByText(text),
+  /** An empty list's way out, by its label: «Quitar el filtro», «Quitar «Llegada tarde»». */
+  emptyAction: (page: Page, label: string) => page.getByRole("button", { name: label, exact: true }),
   /** The way out of an empty or failed list: back to the form. */
   editSearchFromEmpty: (page: Page) => page.getByRole("button", { name: "Volver a editar la búsqueda" }),
   /** The scroller the list grows inside. */
@@ -228,13 +232,19 @@ export const results = {
 /* ---- Filters: the desk column, or the phone's «Filtros» sheet ---- */
 
 export type StopsLabel = "Todos" | "Directo" | "1" | "2+";
+export type DayPart = "Mañana" | "Tarde" | "Noche";
 
 export const filters = {
   sheet: (page: Page) => page.getByRole("dialog", { name: "Filtros", exact: true }),
   /** The phone's chip for an active filter, and its way out. */
   removeChip: (page: Page, label: string) => page.getByRole("button", { name: `Quitar filtro ${label}` }),
+  /** A one-tap toggle of the phone's filter row: «Directo», «Salida mañana», «Salida tarde», «Salida noche». */
+  quick: (page: Page, name: "Directo" | `Salida ${"mañana" | "tarde" | "noche"}`) => page.getByRole("button", { name, exact: true }),
   stops: (root: Root, value: StopsLabel) =>
     root.getByRole("radiogroup", { name: "Escalas", exact: true }).getByRole("radio", { name: value, exact: true }),
+  /** A part of the day the outbound leaves («Salida») or lands («Llegada») in; a toggle. */
+  period: (root: Root, time: "Salida" | "Llegada", part: DayPart) =>
+    root.getByRole("group", { name: time, exact: true }).getByRole("button", { name: part, exact: true }),
   airline: (root: Root, name: string) => root.getByRole("checkbox", { name, exact: true }),
   clear: (root: Root) => root.getByRole("button", { name: "Limpiar filtros" }),
   /** The sheet's primary, «Ver N vuelos». */
@@ -253,6 +263,8 @@ export const detail = {
       }))
       .first(),
   quote: (root: Locator) => root.getByRole("button", { name: /^(Cotizar|Copiado)$/ }),
+  /** «Migratorio»: a phone's sheet only, which has no quote panel to hold it. */
+  migration: (root: Locator) => root.getByRole("switch", { name: "Paquete migratorio" }),
   /** The desk's offer column before an offer is chosen. */
   nothingSelected: (page: Page) => page.getByText("Selecciona una oferta para ver su detalle.", { exact: true }),
   /** The provider's own search, through `/r/<id>`. */
@@ -272,6 +284,11 @@ export const detail = {
 export const quotation = {
   dialog: (page: Page) => page.getByRole("dialog", { name: "Cotización lista para pegar" }),
   close: (page: Page) => page.getByRole("button", { name: "Cerrar la cotización" }),
+  /** The text exactly as it will be pasted. */
+  text: (page: Page) => quotation.dialog(page).getByTestId("quotation-text"),
+  /** «Migratorio», beside the text it rewrites. */
+  migration: (page: Page) => quotation.dialog(page).getByRole("switch", { name: "Paquete migratorio" }),
+  copy: (page: Page) => quotation.dialog(page).getByRole("button", { name: /^(Copiar|Copiado)$/ }),
   /** «Tarifa preparada hace 2 min · vuelve a cotizar si pasa de 15 min», at the dialog's foot. */
   fareAge: (page: Page) => quotation.dialog(page).getByText(/^Tarifa preparada .+ · vuelve a cotizar /),
 };

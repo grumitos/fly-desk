@@ -7,6 +7,7 @@ import type {
   SearchRequest,
   SearchJobResponse,
   SortMode,
+  TimeOfDayPeriod,
 } from "@/types"
 import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
 import { getBrowserClientSessionId } from "@/lib/browser-client-session"
@@ -28,6 +29,7 @@ import {
   returnItineraryForOffer,
 } from "@/lib/offer-display"
 import { MIGRATION_CONCURRENT_MONTHS, deskToday } from "@/lib/runtime-config"
+import { offerAirlineCode, readTimeOfDayPeriods } from "../../../src/core/filtering"
 import { normalizeLocationSearchText, rankLocationSuggestions } from "../../../src/core/location-ranking"
 import { compareOffers } from "../../../src/core/ranking"
 
@@ -621,6 +623,8 @@ export type BackendSearchRequest = {
     maxStops?: number
     maxLayoverMinutes?: number
     includedAirlineCodes?: string[]
+    departurePeriods?: TimeOfDayPeriod[]
+    arrivalPeriods?: TimeOfDayPeriod[]
   }
   currencyCode?: string
   locale?: string
@@ -699,6 +703,8 @@ export function toBackendPayload(request: SearchRequest, sortMode: SortMode): Ba
         maxStops,
         maxLayoverMinutes: request.maxLayoverMinutes ? Number(request.maxLayoverMinutes) : undefined,
         includedAirlineCodes: request.includedAirlineCodes?.length ? request.includedAirlineCodes : undefined,
+        departurePeriods: request.departurePeriods?.length ? request.departurePeriods : undefined,
+        arrivalPeriods: request.arrivalPeriods?.length ? request.arrivalPeriods : undefined,
       },
       currencyCode: "USD",
       locale: "es-PE",
@@ -736,6 +742,8 @@ export function fromBackendRequest(request: BackendSearchRequest | undefined): S
     baggageRequired: request?.filters?.baggageRequired,
     maxLayoverMinutes: request?.filters?.maxLayoverMinutes?.toString(),
     includedAirlineCodes: request?.filters?.includedAirlineCodes,
+    departurePeriods: readTimeOfDayPeriods(request?.filters?.departurePeriods),
+    arrivalPeriods: readTimeOfDayPeriods(request?.filters?.arrivalPeriods),
   }
 }
 
@@ -825,26 +833,22 @@ function offerTransportRecord(
   return offer
 }
 
-function offerAirlineDisplayName(offer: Record<string, unknown>, segment?: Record<string, unknown>): string {
-  const code = String(
-    offer.mainCarrier
-      ?? offer.validatingCarrier
-      ?? segment?.marketingCarrier
-      ?? offer.airline
-      ?? "",
-  ).trim()
+/* The airline that controls the offer (`offerAirlineCode`), named as its own
+   flights spell it or as the catalogue knows its code: a partner's flight
+   never lends it a name. The card and the airline filter both read this. */
+function offerAirlineDisplayName(offer: Record<string, unknown>, itineraries: CanonicalOffer["itineraries"]): string {
+  const code = offerAirlineCode({
+    mainCarrier: typeof offer.mainCarrier === "string" ? offer.mainCarrier : undefined,
+    validatingCarrier: typeof offer.validatingCarrier === "string" ? offer.validatingCarrier : undefined,
+  }).toUpperCase()
+  const segments = (itineraries ?? []).flatMap((itinerary) => itinerary.segments ?? [])
+  const carries = (carrier: unknown) => String(carrier ?? "").trim().toUpperCase() === code
   return resolveAirlineDisplayName({
     names: [
-      segment?.marketingCarrierName,
-      offer.airline,
-      segment?.operatingCarrierName,
+      segments.find((segment) => carries(segment.marketingCarrier) && segment.marketingCarrierName)?.marketingCarrierName,
+      segments.find((segment) => carries(segment.operatingCarrier) && segment.operatingCarrierName)?.operatingCarrierName,
     ],
-    codes: [
-      code,
-      offer.validatingCarrier,
-      segment?.marketingCarrier,
-      segment?.operatingCarrier,
-    ],
+    codes: [code],
     fallback: code,
   })
 }
@@ -864,7 +868,7 @@ function normalizeOffer(input: unknown, expectedTripType?: SearchRequest["tripTy
     ...(offer as Partial<CanonicalOffer>),
     id: String(offer.id),
     providerSource: String(offer.providerSource),
-    airline: offerAirlineDisplayName({ ...offer, itineraries }, outbound),
+    airline: offerAirlineDisplayName(offer, itineraries),
     itineraries,
     origin: typeof outbound?.origin === "string" ? outbound.origin : String(offer.origin ?? ""),
     destination: typeof outboundLast?.destination === "string" ? outboundLast.destination : String(offer.destination ?? ""),
@@ -1054,6 +1058,8 @@ export function migrationRequestForMonth(
     checkedBaggageRequired: false,
     baggageRequired: false,
     includedAirlineCodes: undefined,
+    departurePeriods: undefined,
+    arrivalPeriods: undefined,
   }
 }
 
@@ -1260,7 +1266,13 @@ export async function requestQuotation(payload: QuotationRequest): Promise<Quota
     commercialText?: unknown
   }>("/api/quotation", payload)
   const rawOfferRecord = offerTransportRecord(data.offer)
-  const priceVerifiedAt = rawOfferRecord?.priceVerifiedAt
+  /* A fare fresh from its search comes back live and dated by its search; an
+     older one, confirmed by the provider and dated by that confirmation. */
+  const quotedAt = rawOfferRecord?.priceConfidence === "live"
+    ? rawOfferRecord.quotationPreparedAt
+    : rawOfferRecord?.priceConfidence === "validated" && rawOfferRecord.priceStatus === "verified"
+      ? rawOfferRecord.priceVerifiedAt
+      : undefined
 
   if (
     typeof data.searchSessionId !== "string"
@@ -1268,10 +1280,8 @@ export async function requestQuotation(payload: QuotationRequest): Promise<Quota
     || typeof data.commercialText !== "string"
     || data.commercialText.trim().length === 0
     || !rawOfferRecord
-    || rawOfferRecord.priceConfidence !== "validated"
-    || rawOfferRecord.priceStatus !== "verified"
-    || typeof priceVerifiedAt !== "string"
-    || !Number.isFinite(Date.parse(priceVerifiedAt))
+    || typeof quotedAt !== "string"
+    || !Number.isFinite(Date.parse(quotedAt))
   ) {
     throw new FlyDeskApiError(
       "El servidor devolvió una cotización no válida.",

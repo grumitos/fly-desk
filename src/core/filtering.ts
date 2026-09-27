@@ -1,4 +1,5 @@
-import type { SearchFilters } from "./types";
+import { TIME_OF_DAY_PERIODS, type SearchFilters, type TimeOfDayPeriod } from "./types";
+import { wallClockMs } from "./flight-duration";
 import { maxStopsAcrossItineraries, totalDuration, type RankableItinerary, type RankableOffer } from "./ranking";
 
 /* The fields a filter reads, structural so the browser's rail keeps exactly
@@ -24,9 +25,53 @@ interface FilterableOffer extends RankableOffer {
 /** `minStops` is the rail's «2+», a floor the backend request has no field for. */
 export type OfferFilters = SearchFilters & { minStops?: number };
 
-/** The code an airline filter matches: one airline per offer, the one that sells it. */
+/**
+ * The airline that controls an offer, one per offer: the one that tickets it
+ * (the provider's validating carrier), else the first flight's marketer. A
+ * partner that only markets or operates a leg does not. The airline filter,
+ * its options and the card's name and logo all read this code.
+ */
 export function offerAirlineCode(offer: Pick<FilterableOffer, "mainCarrier" | "validatingCarrier">): string {
-  return offer.mainCarrier ?? offer.validatingCarrier ?? "";
+  return offer.validatingCarrier?.trim() || offer.mainCarrier?.trim() || "";
+}
+
+/** The parts of the day a request, a link or a stored view names, in catalogue order; anything else is dropped. */
+export function readTimeOfDayPeriods(input: unknown): TimeOfDayPeriod[] | undefined {
+  if (!Array.isArray(input)) {
+    return undefined;
+  }
+
+  const periods = TIME_OF_DAY_PERIODS.filter((period) => input.includes(period));
+  return periods.length > 0 ? periods : undefined;
+}
+
+/*
+ * Whether a time is in one of `periods`, read as the card reads it: the
+ * airport's wall clock, whatever offset the provider stamped on it (Click and
+ * Book Plus writes `-05:00` on Madrid). A time that cannot be read is in none.
+ */
+function inPeriods(at: string | undefined, periods: readonly TimeOfDayPeriod[] | undefined): boolean {
+  if (!periods?.length) {
+    return true;
+  }
+
+  const wall = wallClockMs(at);
+  if (wall === undefined) {
+    return false;
+  }
+
+  const minutes = Math.floor(wall / 60_000) % 1440;
+  const period: TimeOfDayPeriod = minutes >= 300 && minutes < 720
+    ? "morning"
+    : minutes >= 720 && minutes < 1080
+      ? "afternoon"
+      : "night";
+  return periods.includes(period);
+}
+
+function outboundSegments(offer: FilterableOffer): readonly FilterableSegment[] {
+  const itineraries = offer.itineraries ?? [];
+  return (itineraries.find((itinerary) => itinerary.direction === "outbound") ?? itineraries[0])?.segments ?? [];
 }
 
 function toMinutes(iso: string): number {
@@ -172,6 +217,16 @@ export function offerMatchesFilters(offer: FilterableOffer, filters: OfferFilter
     if (toMinutes(last.arrivalAt) > filters.maxArrivalMinutes) {
       return false;
     }
+  }
+
+  /* Within a group the parts of the day add up; the groups narrow each other. */
+  const outbound = outboundSegments(offer);
+  if (!inPeriods(outbound[0]?.departureAt, filters.departurePeriods)) {
+    return false;
+  }
+
+  if (!inPeriods(outbound[outbound.length - 1]?.arrivalAt, filters.arrivalPeriods)) {
+    return false;
   }
 
   return true;

@@ -32,9 +32,9 @@ Fly Desk is a Bun-only application prepared for VPS deployment:
 - up to three recent origins/destinations per browser session, and three frequent ones from one global ranking: uses in the last 30 days, with the last card kept for the station used most recently. The backend records a route when it accepts a search
 - an idle provider rail that names the providers the desk searches, always and without health copy; readiness stays on the authenticated `/api/provider-status` surface that the router uses internally
 - a shareable search URL: every search writes its parameters onto the address bar. Opening a link to an exact search whose route and dates the form would accept runs it, once; any other link — a flexible or migratory search, missing data, or dates the form would refuse — arrives filled and waits for «Buscar». `?job=` reads the job it names instead, and reloading in the tab that wrote the URL does not re-run it
-- visible filters for stops, maximum layover time, baggage, and airlines
+- visible filters for stops, maximum layover time, baggage, the outbound's departure and arrival by part of the day, and airlines
 - one continuous list of results, grown as it is scrolled, with backend warnings
-- a side panel with details, known conditions, purchase paths, and quotation from the shared core; the first quote calls `/api/quotation`, requires a complete provider-validated response for the exact stored flight, and may reuse it for at most 15 minutes before revalidation; the migratory switch updates that same verified offer immediately through the shared compositor
+- a side panel with details, known conditions, purchase paths, and quotation from the shared core; «Cotizar» calls `/api/quotation`, which quotes a live fare whose search answered in the last 15 minutes as the list has it, with no provider request, and first confirms an older fare with the provider for the exact stored flight, reusing that confirmation for at most 15 minutes; the quote's migratory switch rewrites the text over that same quoted offer immediately, through the shared compositor, and copies what it shows. A phone, which has no quote panel, keeps that switch at the foot of its offer sheet
 
 The current React UI does not expose:
 
