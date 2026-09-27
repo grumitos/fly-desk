@@ -20,7 +20,6 @@ import { Sheet } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 import { useSearch } from "@/hooks/useSearch"
 import { useShellSize } from "@/hooks/useShellSize"
-import { resolveAirlineDisplayName } from "@/lib/airline-names"
 import { cheapestOffer, migrationRequestForMonth } from "@/lib/api"
 import { formatCount, plural } from "@/lib/format"
 import { isIsoDate } from "@/lib/iso-date"
@@ -45,7 +44,7 @@ import {
   writeSharedSearchToUrl,
   type SharedSearchState,
 } from "@/lib/search-share"
-import { isSortMode, type CanonicalOffer, type SearchJobResponse, type SearchRequest, type Segment, type SortMode } from "@/types"
+import { isSortMode, type CanonicalOffer, type SearchJobResponse, type SearchRequest, type SortMode } from "@/types"
 import { airlineLogoAssetPath } from "../../src/core/airline-assets"
 import { offerAirlineCode, offerMatchesFilters, type OfferFilters } from "../../src/core/filtering"
 import { parseCommercialQuotation, type CommercialQuotationParseResult } from "../../src/core/quotation-parser"
@@ -1327,14 +1326,14 @@ function viewFromRequest(request: SearchRequest, sort: SortMode): ListView {
   return { sort, filters: filtersFromRequest(request), airlines: request.includedAirlineCodes ?? [] }
 }
 
-/* An airline is the one that sells the offer (`offerAirlineCode`); codes that
-   share a name are one option. */
+/* An airline is the one that controls the offer (`offerAirlineCode`), under
+   the name its card shows; codes that share a name are one option. */
 function buildAirlineOptions(offers: CanonicalOffer[]): AirlineFilterOption[] {
   const options = new Map<string, AirlineFilterOption>()
   for (const offer of offers) {
     const code = offerAirlineCode(offer)
     if (!code) continue
-    const label = airlineFilterLabel(offer, code)
+    const label = offer.airline || code
     const id = label.toLocaleUpperCase("es-PE")
     const option = options.get(id)
     if (option) {
@@ -1346,41 +1345,6 @@ function buildAirlineOptions(offers: CanonicalOffer[]): AirlineFilterOption[] {
   }
   return Array.from(options.values())
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
-}
-
-function airlineFilterLabel(offer: CanonicalOffer, code: string): string {
-  const codeToken = airlineToken(code)
-  const segments = (offer.itineraries ?? []).flatMap((itinerary) => itinerary.segments ?? [])
-  const segment = airlineNameSegmentForCode(segments, codeToken)
-    ?? segments.find((candidate) => candidate.marketingCarrierName || candidate.operatingCarrierName)
-  return resolveAirlineDisplayName({
-    names: [
-      segment?.marketingCarrier && airlineToken(segment.marketingCarrier) === codeToken
-        ? segment.marketingCarrierName
-        : undefined,
-      segment?.operatingCarrier && airlineToken(segment.operatingCarrier) === codeToken
-        ? segment.operatingCarrierName
-        : undefined,
-      segment?.marketingCarrierName,
-      offer.airline,
-      segment?.operatingCarrierName,
-    ],
-    codes: [code, offer.validatingCarrier, segment?.marketingCarrier, segment?.operatingCarrier],
-    fallback: "Aerolínea",
-  })
-}
-
-function airlineToken(value: unknown): string {
-  return String(value ?? "").trim().toUpperCase()
-}
-
-function airlineNameSegmentForCode(segments: Segment[], codeToken: string): Segment | undefined {
-  if (!codeToken) return undefined
-
-  return segments.find((segment) => (
-    (airlineToken(segment.marketingCarrier) === codeToken && Boolean(segment.marketingCarrierName?.trim())) ||
-    (airlineToken(segment.operatingCarrier) === codeToken && Boolean(segment.operatingCarrierName?.trim()))
-  ))
 }
 
 function isAirlineFilterSelected(airline: AirlineFilterOption, selectedAirlines: string[]): boolean {

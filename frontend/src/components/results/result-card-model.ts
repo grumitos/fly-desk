@@ -1,6 +1,7 @@
 import type { CanonicalOffer, Itinerary, RedirectVerification, Segment } from "@/types"
 import { airlineLogoAssetPath } from "../../../../src/core/airline-assets"
-import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
+import { offerAirlineCode } from "../../../../src/core/filtering"
+import { normalizeAirlineDisplayName } from "@/lib/airline-names"
 import { formatAmount, formatDayMonthNumeric, formatMoney } from "@/lib/format"
 import { diffDays } from "@/lib/iso-date"
 import {
@@ -272,19 +273,12 @@ function stopsForItinerary(itinerary: Itinerary | null) {
   }
 }
 
+/* The airline that controls the fare, as the airline filter reads it: its
+   code (`offerAirlineCode`) and the name `lib/api.ts` gave it. */
 function carrierParts(offer: CanonicalOffer) {
-  const segment = primaryItineraryForOffer(offer)?.segments?.[0]
-  const code = String(
-    offer.mainCarrier ?? offer.validatingCarrier ?? segment?.marketingCarrier ?? offer.airline ?? "",
-  ).trim()
-  const names = [segment?.marketingCarrierName, offer.airline, segment?.operatingCarrierName]
-  const name = resolveAirlineDisplayName({
-    names,
-    codes: [code, offer.validatingCarrier, segment?.marketingCarrier, segment?.operatingCarrier],
-  })
-  const knownTokens = new Set(
-    [code, name, names.find((value) => value?.trim())].map((value) => String(value ?? "").trim().toUpperCase()),
-  )
+  const code = offerAirlineCode(offer)
+  const name = offer.airline
+  const knownTokens = new Set([code, name].map((value) => String(value ?? "").trim().toUpperCase()))
 
   return {
     code,

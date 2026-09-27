@@ -24,9 +24,14 @@ interface FilterableOffer extends RankableOffer {
 /** `minStops` is the rail's «2+», a floor the backend request has no field for. */
 export type OfferFilters = SearchFilters & { minStops?: number };
 
-/** The code an airline filter matches: one airline per offer, the one that sells it. */
+/**
+ * The airline that controls an offer, one per offer: the one that tickets it
+ * (the provider's validating carrier), else the first flight's marketer. A
+ * partner that only markets or operates a leg does not. The airline filter,
+ * its options and the card's name and logo all read this code.
+ */
 export function offerAirlineCode(offer: Pick<FilterableOffer, "mainCarrier" | "validatingCarrier">): string {
-  return offer.mainCarrier ?? offer.validatingCarrier ?? "";
+  return offer.validatingCarrier?.trim() || offer.mainCarrier?.trim() || "";
 }
 
 function toMinutes(iso: string): number {

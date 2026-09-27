@@ -28,6 +28,7 @@ import {
   returnItineraryForOffer,
 } from "@/lib/offer-display"
 import { MIGRATION_CONCURRENT_MONTHS, deskToday } from "@/lib/runtime-config"
+import { offerAirlineCode } from "../../../src/core/filtering"
 import { normalizeLocationSearchText, rankLocationSuggestions } from "../../../src/core/location-ranking"
 import { compareOffers } from "../../../src/core/ranking"
 
@@ -825,26 +826,22 @@ function offerTransportRecord(
   return offer
 }
 
-function offerAirlineDisplayName(offer: Record<string, unknown>, segment?: Record<string, unknown>): string {
-  const code = String(
-    offer.mainCarrier
-      ?? offer.validatingCarrier
-      ?? segment?.marketingCarrier
-      ?? offer.airline
-      ?? "",
-  ).trim()
+/* The airline that controls the offer (`offerAirlineCode`), named as its own
+   flights spell it or as the catalogue knows its code: a partner's flight
+   never lends it a name. The card and the airline filter both read this. */
+function offerAirlineDisplayName(offer: Record<string, unknown>, itineraries: CanonicalOffer["itineraries"]): string {
+  const code = offerAirlineCode({
+    mainCarrier: typeof offer.mainCarrier === "string" ? offer.mainCarrier : undefined,
+    validatingCarrier: typeof offer.validatingCarrier === "string" ? offer.validatingCarrier : undefined,
+  }).toUpperCase()
+  const segments = (itineraries ?? []).flatMap((itinerary) => itinerary.segments ?? [])
+  const carries = (carrier: unknown) => String(carrier ?? "").trim().toUpperCase() === code
   return resolveAirlineDisplayName({
     names: [
-      segment?.marketingCarrierName,
-      offer.airline,
-      segment?.operatingCarrierName,
+      segments.find((segment) => carries(segment.marketingCarrier) && segment.marketingCarrierName)?.marketingCarrierName,
+      segments.find((segment) => carries(segment.operatingCarrier) && segment.operatingCarrierName)?.operatingCarrierName,
     ],
-    codes: [
-      code,
-      offer.validatingCarrier,
-      segment?.marketingCarrier,
-      segment?.operatingCarrier,
-    ],
+    codes: [code],
     fallback: code,
   })
 }
@@ -864,7 +861,7 @@ function normalizeOffer(input: unknown, expectedTripType?: SearchRequest["tripTy
     ...(offer as Partial<CanonicalOffer>),
     id: String(offer.id),
     providerSource: String(offer.providerSource),
-    airline: offerAirlineDisplayName({ ...offer, itineraries }, outbound),
+    airline: offerAirlineDisplayName(offer, itineraries),
     itineraries,
     origin: typeof outbound?.origin === "string" ? outbound.origin : String(offer.origin ?? ""),
     destination: typeof outboundLast?.destination === "string" ? outboundLast.destination : String(offer.destination ?? ""),

@@ -8,7 +8,7 @@ import {
   type QuotationAnswer,
   type SearchJob,
 } from "./support/api-client.ts";
-import { readWholeList, rowKey, runSearch, waitForMotion, waitForResults } from "./support/flows.ts";
+import { readWholeList, rowKey, runSearch, startedJob, waitForMotion, waitForResults } from "./support/flows.ts";
 import { defineSuite, type TestScope } from "./support/harness.ts";
 import { fakeCbplusToken, FAKE_CBPLUS_TERMINAL_ID, type OfferSpec, type SearchQuery } from "./support/fixtures.ts";
 import {
@@ -247,6 +247,41 @@ suite.test("a shared round-trip link survives the sign-in gate and carries the s
   assert.ok(bodies.length > 0);
   assert.deepEqual(bodies.filter((entry) => entry.body.includes(CBPLUS_TOKEN)).map((entry) => entry.url), [], "the token reached an /api answer");
   assert.ok(cbplusLocation.searchParams.get("token") === CBPLUS_TOKEN, "the 302 is where the token belongs");
+});
+
+/* LIM–MAD one way: an Iberia ticket whose first flight Avianca markets and
+   flies, and an Avianca ticket on Avianca's own flights. */
+const LIM_MAD_TICKETS: OfferSpec[] = [
+  { outbound: ["AV50 LIM-BOG 04:55-08:30", "IB6588 BOG-MAD 12:30-05:55+1"], price: 890, baggage: { carryOn: true, checked: 1 }, validatingCarrier: "IB" },
+  { outbound: ["AV26 LIM-BOG 09:00-12:35", "AV10 BOG-MAD 15:00-08:25+1"], price: 910, baggage: { carryOn: true, checked: 1 } },
+];
+
+suite.test("an airline's filter keeps the fares it tickets, not those whose first flight it only markets, and the card names the ticketing airline", async (scope) => {
+  const { stack } = scope;
+  scope.fake.setFlights("cbplus", { origin: "LIM", destination: "MAD" }, LIM_MAD_TICKETS);
+  const { page } = await scope.signedInPage("/");
+  const job = await startedJob<SearchJob>(page, async () => {
+    await page.goto(`${stack.baseUrl}${searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "MAD", departure: day(66) })}`);
+  });
+  await waitForResults(page, 2);
+
+  /* As the provider sends it: Iberia tickets the fare whose first flight Avianca markets. */
+  const interline = searchOffers(await readSearchJob(await scope.api(), job.searchJobId)).find((offer) => offer.price.total.amount === 890);
+  assert.deepEqual([interline?.validatingCarrier, interline?.mainCarrier], ["IB", "AV"]);
+  assert.deepEqual(
+    (await readCards(page)).map((card) => `${card.airline} ${card.amount}`).sort(),
+    ["Avianca 910", "Iberia 890"],
+    "a card names an airline that does not ticket its fare",
+  );
+
+  await filters.airline(page, "Avianca").click();
+  await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: 1, total: 2 }));
+  assert.deepEqual((await readCards(page)).map((card) => `${card.airline} ${card.amount}`), ["Avianca 910"], "Avianca's filter kept a fare Iberia tickets");
+  await filters.airline(page, "Avianca").click();
+  await filters.airline(page, "Iberia").click();
+  await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: 1, total: 2 }));
+  assert.deepEqual((await readCards(page)).map((card) => `${card.airline} ${card.amount}`), ["Iberia 890"]);
+  assert.equal(new URL(page.url()).searchParams.get("airlines"), "IB");
 });
 
 /* ---- The flexible round trip: `/api/matrix`, one cell per departure day ---- */
