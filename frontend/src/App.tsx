@@ -1120,8 +1120,8 @@ const FiltersPanel = memo(function FiltersPanel({
                     onCheckedChange={() => onToggleAirline(airline)}
                     aria-label={airline.label}
                   />
-                  {/* A carrier with no artwork answers 404: the image leaves
-                      rather than hold an empty logo's width before the name. */}
+                  {/* A carrier with no artwork answers 404: the broken glyph
+                      goes, and its box stays so every name starts in line. */}
                   {airline.logo && (
                     <img
                       src={airline.logo}
@@ -1129,7 +1129,7 @@ const FiltersPanel = memo(function FiltersPanel({
                       className="fd-airline-row-logo"
                       decoding="async"
                       loading="lazy"
-                      onError={(event) => { event.currentTarget.hidden = true }}
+                      onError={(event) => { event.currentTarget.style.visibility = "hidden" }}
                     />
                   )}
                   <span className="fd-airline-row-name" title={airline.label}>{airline.label}</span>
