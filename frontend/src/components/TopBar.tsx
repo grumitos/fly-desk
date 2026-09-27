@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, type ReactNode } from "react"
+import { memo, useEffect, useState, type CSSProperties, type ReactNode } from "react"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -72,18 +72,23 @@ function describeCapacity(capacity: SearchCapacity): { used: number; total: numb
 
 /*
  * The capacity the two agents share, as the title bar reads everything else:
- * a glyph and a tabular «3/7» in a cell of the capsules' height. It is muted
- * while nothing runs and in ink while something does; while a search waits
- * for a cupo it takes the clock and the colours of the «En espera» line. Its
- * name, value and tooltip say it in words. It follows the runner as the
- * capacity changes and goes blank, keeping its box, while it cannot be read.
+ * a gauge and a tabular «3/7» in a cell of the capsules' height. The gauge's
+ * needle points at the share of cupos in use and travels as it changes. It is
+ * muted while nothing runs and in ink while something does; with every cupo
+ * in use the gauge takes the warning colour; while a search waits for a cupo
+ * it takes the clock, which pulses, and the colours of the «En espera» line.
+ * Its name, value and tooltip say it in words. It follows the runner as the
+ * capacity changes and fades blank, keeping its box, while it cannot be read.
  */
 function CapacityMeter() {
   const capacity = useSearchCapacity()
   const reading = capacity ? describeCapacity(capacity) : null
+  const fill = reading && reading.total > 0 ? reading.used / reading.total : 0
   const state = !capacity
     ? "unknown"
-    : capacity.queuedSearches > 0 ? "waiting" : capacity.activeSearches > 0 ? "busy" : "idle"
+    : capacity.queuedSearches > 0
+      ? "waiting"
+      : fill >= 1 ? "full" : capacity.activeSearches > 0 ? "busy" : "idle"
 
   return (
     <Tooltip>
@@ -99,6 +104,7 @@ function CapacityMeter() {
           tabIndex={reading ? 0 : -1}
           data-state={state}
           className="fd-capacity fd-focus-ring"
+          style={{ "--fd-capacity-fill": fill } as CSSProperties}
         >
           <AppIcon name={state === "waiting" ? "clock" : "capacity"} />
           <span className="fd-capacity-count">{reading ? `${reading.used}/${reading.total}` : "0/0"}</span>

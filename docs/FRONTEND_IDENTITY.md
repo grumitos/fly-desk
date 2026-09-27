@@ -132,7 +132,7 @@ because the build cannot keep a derived colour theme-aware.
 - Filters: a 248px column on a desk and tablet, a sheet on a phone, with visible selected states and «Limpiar».
 - The result row: a table row on a desk — the carrier's mark, «who flies», the legs, the price with the baggage pair beside it, and the provider — under a column header whose four sortable columns (Horario, Duración, Escalas, Precio) are the order control. Below 787px of list the row becomes the stacked phone card.
 - The detail: the selected offer and its quotation, in flat data groups under a hero and an action bar; the third column of a wide desk, a side sheet on a narrower desk or tablet, a bottom sheet on a phone. With nothing selected it says so in one quiet line, `<p class="fd-detail-empty">` «Selecciona una oferta para ver su detalle.»
-- The capacity meter: the capacity the two agents share, left of the capsules, read like the rest of the title bar: a gauge glyph and a tabular «3/7», the cupos the searches in progress hold out of the most that can run, in a cell of the capsules' height and radius (on a phone, the loose buttons' bordered box). It is `muted-foreground` while nothing runs and `foreground` while a search runs; while a search waits for a cupo it takes the clock glyph and the «En espera» line's colours (`warning-soft`, `warning-soft-foreground`, `warning-border`). It is a `meter` named «Capacidad de búsqueda» whose value says the cupos and the searches in words («4 de 7 cupos en uso · 2 búsquedas en curso · 1 en espera»), which its tooltip repeats. It never says which search holds how many cupos. It is blank, its box kept, while the capacity cannot be read.
+- The capacity meter: the capacity the two agents share, left of the capsules, read like the rest of the title bar: a gauge glyph and a tabular «3/7», the cupos the searches in progress hold out of the most that can run, in a cell of the capsules' height and radius (on a phone, the loose buttons' bordered box). The gauge's needle points at the share of cupos in use, from the arc's left end to its right, and travels as the share changes. It is `muted-foreground` while nothing runs and `foreground` while a search runs; with every cupo in use the gauge turns `warning`; while a search waits for a cupo it takes the clock glyph, pulsing, and the «En espera» line's colours (`warning-soft`, `warning-soft-foreground`, `warning-border`). It is a `meter` named «Capacidad de búsqueda» whose value says the cupos and the searches in words («4 de 7 cupos en uso · 2 búsquedas en curso · 1 en espera»), which its tooltip repeats. It never says which search holds how many cupos. It fades blank, its box kept, while the capacity cannot be read.
 - The provider rail: «Buscando en» and the providers this deployment searches, at the foot of the idle screen, with no health state. A provider that fails a search is reported in the notice line, never with its own words.
 - The notice line: one line, dismissible, above the results (see Copy).
 - Primitives: `.fd-btn` (primary, secondary and ghost; chip, small, medium, extra-large and icon sizes), `.fd-segmented`, `.fd-popover`, `.fd-checkbox`, `.fd-switch`, `.fd-tooltip`, `.fd-key`, and the `Sheet` component in bottom, side and modal placements.
@@ -171,8 +171,9 @@ Keyboard focus must be visible, and visible controls must be reachable by tab un
   `var(--i, 0)`.
 - Reduced motion is one list, at the end of `design-system.css`: every
   movement duration and cue drops to 0ms, entrances become a 90ms fade, and
-  the loops stop — the spinner, the skeleton blocks and rows, and the calendar
-  sweep. That is why a partial search also says «Parcial» in words.
+  the loops stop — the spinner, the skeleton blocks and rows, the calendar
+  sweep and the waiting capacity meter's clock. That is why a partial search
+  also says «Parcial» in words.
   JavaScript reads the same tokens (`lib/reduced-motion.ts`), so the FLIPs stop
   with them.
 - A theme change never animates.

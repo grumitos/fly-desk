@@ -247,6 +247,19 @@ suite.test("the top bar's meter follows the shared capacity, and a search that h
   assert.equal(await shown(), "4/7");
   assert.equal(await meter.getAttribute("data-state"), "busy");
 
+  /* Three exact searches take the last cupos with nothing waiting: the meter
+     reads full until they end. */
+  const exacts = ["PIU", "TRU", "CIX"].map((destination) => ({ origin: "LIM", destination }));
+  const exactGates = exacts.map((exact) => holdRoute(fake, exact));
+  for (const [index, exact] of exacts.entries()) {
+    await startSearch(other, searchPayloads.exact(exact.origin, exact.destination, day(245 + index)));
+  }
+  await eventually(async () => assert.equal(await used(), 7), { message: "the meter followed the exact searches" });
+  assert.equal(await meter.getAttribute("data-state"), "full");
+  for (const gate of exactGates) gate.release();
+  await eventually(async () => assert.equal(await used(), 4));
+  assert.equal(await meter.getAttribute("data-state"), "busy");
+
   /* This agent's range does not fit: one line says it waits, and the meter
      takes that line's colours. */
   const route = { origin: "LIM", destination: "SCL" };
