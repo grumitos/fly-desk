@@ -23,10 +23,8 @@ where the token comes from, how to tell when it is missing, and how to recover.
   after its search uses the token installed last.
 - The release declares that behaviour to the platform as the capability
   `cbplus-token-file` in `deploy/release-capabilities`. The platform restarts
-  the search and redirect units on a renewal when it cannot tell that the
-  active release has it; how it tells, today and after its switch to that
-  declaration, is in [`DEPLOY_APP.md`](./DEPLOY_APP.md), "Release
-  Capabilities".
+  the search and redirect units on a renewal when the active release does not
+  declare it; see [`DEPLOY_APP.md`](./DEPLOY_APP.md), "Release Capabilities".
 - `src/provider-context.ts` treats a token as missing when it has expired or
   names a terminal other than the configured one.
 
