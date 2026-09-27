@@ -986,7 +986,7 @@
   .fd-topbar-inner {
     min-height: 48px;
     height: 48px;
-    padding: 0 calc(12px + env(safe-area-inset-right, 0px)) 0 calc(12px + env(safe-area-inset-left, 0px));
+    padding: 0 calc(14px + env(safe-area-inset-right, 0px)) 0 calc(14px + env(safe-area-inset-left, 0px));
   }
 
   .fd-topbar[data-workspace-active="true"] {
@@ -1049,6 +1049,12 @@
     gap: 8px;
   }
 
+  /* Closed, the flexible options leave the column instead of holding an
+     empty row, so the mode and trip segments stand the form's one gap apart. */
+  .fd-inline-reveal-closed {
+    position: absolute;
+  }
+
   .fd-trip-mode-controls > .fd-segmented {
     width: auto;
   }
@@ -1060,6 +1066,12 @@
 
   .fd-stay-counter {
     height: var(--fd-control-touch-lg);
+  }
+
+  /* «Estadía» starts where the fields' labels do: 14px inside the border,
+     the group's own 2px included. */
+  .fd-stay-counter--stretch .fd-stay-label {
+    padding-left: 12px;
   }
 
   .fd-stay-counter-step {

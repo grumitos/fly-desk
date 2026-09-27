@@ -1723,14 +1723,9 @@
     }
   }
 
+  /* The phone's offer sheet keeps the 14px inset of `.fd-detail-sheet`, the
+     one every sheet uses. */
   .fd-sheet--bottom {
-    .fd-detail-header,
-    .fd-detail-hero,
-    .fd-detail-body,
-    .fd-detail-footer {
-      padding-inline: 16px;
-    }
-
     .fd-detail-header {
       height: var(--fd-control-touch);
       gap: 10px;
@@ -1842,7 +1837,7 @@
     .fd-detail-quote-error {
       display: flex;
       align-items: flex-start;
-      margin: 0 16px 8px;
+      margin: 0 14px 8px;
     }
 
     .fd-detail-quote-error-message {

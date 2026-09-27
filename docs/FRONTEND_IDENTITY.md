@@ -117,7 +117,10 @@ because the build cannot keep a derived colour theme-aware.
 - Shadows are for popovers and sheets, the key caps of shortcuts, and the
   phone's result card; the dark theme redefines them in black.
 - The desk workspace has 16px gutters and 10px between its columns; a phone at
-  rest has 14px sides and uses the whole width once a search exists.
+  rest has 14px sides, its title bar's included, and uses the whole width once
+  a search exists. On a phone the form's controls stand 8px apart and start
+  their text 14px inside their border, and every sheet, the offer's included,
+  keeps a 14px inset.
 
 ## Surfaces and Components
 
