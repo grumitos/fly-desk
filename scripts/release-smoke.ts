@@ -1,6 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -14,8 +14,7 @@ import { join, resolve } from "node:path";
  * and one of its assets. The environment carries what a production file may:
  * a date override production must ignore, and settings left empty that must
  * keep their defaults. What the platform relies on is checked as well: the
- * capabilities the release declares to it, the literal it still greps for to
- * know the release re-reads the token file, and that the release cannot fetch a
+ * capabilities the release declares to it, and that the release cannot fetch a
  * package it does not carry.
  *
  *   bun scripts/release-smoke.ts <fly-desk.tar.gz>
@@ -234,19 +233,9 @@ function declaredCapabilities(): void {
   ));
   check(
     lines.includes("cbplus-token-file"),
-    "deploy/release-capabilities does not declare cbplus-token-file: once the platform reads it, the search and redirect units would be restarted on every token renewal.",
+    "deploy/release-capabilities does not declare cbplus-token-file: the platform would restart the search and redirect units on every token renewal.",
   );
   passed.push(`the release declares its capabilities to the platform: ${lines.join(", ")}`);
-}
-
-/* Removed once the platform reads deploy/release-capabilities instead of grepping for this literal. */
-function releasedTokenFileLiteral(): void {
-  const sources = readdirSync(join(app, "src"), { recursive: true, encoding: "utf8" }).filter((name) => name.endsWith(".ts"));
-  check(
-    sources.some((name) => readFileSync(join(app, "src", name), "utf8").includes("CBPLUS_TOKEN_FILE")),
-    "No released src/**/*.ts names CBPLUS_TOKEN_FILE: the platform would restart the search and redirect units on every token renewal.",
-  );
-  passed.push("the release names CBPLUS_TOKEN_FILE where the platform looks for it");
 }
 
 function cannotFetchPackages(): void {
@@ -308,7 +297,6 @@ async function main(): Promise<void> {
   const revision = readFileSync(join(app, "REVISION"), "utf8").trim();
   prepare(revision);
   declaredCapabilities();
-  releasedTokenFileLiteral();
   cannotFetchPackages();
 
   const password = randomBytes(18).toString("base64url");
