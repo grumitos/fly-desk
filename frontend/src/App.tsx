@@ -8,7 +8,7 @@ import {
   type EmptyByFiltersCopy,
   type ResultsNavigation,
 } from "@/components/ResultsPanel"
-import { ActiveFilterChips } from "@/components/results/ActiveFilterChips"
+import { ActiveFilterChips, type QuickFilter } from "@/components/results/ActiveFilterChips"
 import type { DisplayMonth } from "@/components/results/migration-month-model"
 import { SearchShell, type SearchDraftHandle } from "@/components/SearchShell"
 import { TopBar } from "@/components/TopBar"
@@ -494,6 +494,29 @@ export default function App() {
     }
   }, [airlineOptions, filters, handleFilterChange, toggleAirline])
 
+  /* The phone's one-tap filters beside «Filtros», each the sheet's own state
+     and the chip it stands for: «Directo», and the part of the day the
+     outbound leaves in. */
+  const quickFilters = useMemo<QuickFilter[]>(() => [
+    { id: "stops", label: "Directo", name: "Directo", pressed: stopFilterValue(filters) === "direct" },
+    ...TIME_PERIODS.map((period) => ({
+      id: `${TIME_GROUPS[0].axis}:${period.value}`,
+      label: period.label,
+      name: `${TIME_GROUPS[0].label} ${period.label.toLocaleLowerCase("es-PE")}`,
+      icon: period.icon,
+      pressed: filters.departurePeriods?.includes(period.value) ?? false,
+    })),
+  ], [filters])
+
+  const handleToggleQuickFilter = useCallback((id: string) => {
+    if (id === "stops") {
+      handleFilterChange(stopFilterPatch(stopFilterValue(filters) === "direct" ? "any" : "direct"))
+      return
+    }
+    const period = TIME_PERIODS.find((candidate) => id === `${TIME_GROUPS[0].axis}:${candidate.value}`)
+    if (period) handleFilterChange(timePeriodPatch(filters, TIME_GROUPS[0], period.value))
+  }, [filters, handleFilterChange])
+
   /* Plate 2g: with the list empty, the filter whose removal recovers most
      offers is named; a tie or no recovery names none rather than guess. */
   const emptyByFilters = useMemo<EmptyByFiltersCopy | undefined>(() => {
@@ -792,9 +815,11 @@ export default function App() {
             {shouldShowWorkspace && phone && (
               <ActiveFilterChips
                 chips={activeFilterChips}
+                quickFilters={quickFilters}
                 hiddenByFiltersCount={hiddenByFiltersCount}
                 onOpenFilters={openFiltersSheet}
                 onRemoveFilter={handleRemoveFilterChip}
+                onToggleQuickFilter={handleToggleQuickFilter}
                 /* On a phone the title bar hides once a search exists. */
                 onCopySearchConfig={handleCopySearchConfig}
                 copyDisabled={!hasSearchConfig}

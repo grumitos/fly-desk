@@ -17,6 +17,7 @@ import {
   isUnclipped,
   migration,
   oneStopLabels,
+  readCards,
   readResultCount,
   readSuggestion,
   readSuggestions,
@@ -160,7 +161,8 @@ suite.test("on a phone the whole search runs through sheets, the back button clo
   assert.equal(new URL(page.url()).pathname, new URL(searchUrl).pathname, "the back left the desk instead of closing the sheet");
   assert.equal(await page.evaluate(() => (history.state as { fdSheet?: unknown } | null)?.fdSheet ?? null), null, "the sheet's history entry was left behind");
   await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: 2, total: 4 }));
-  await filters.removeChip(page, "Directo").waitFor();
+  /* The filter row says it with its own «Directo», pressed. */
+  assert.equal(await filters.quick(page, "Directo").getAttribute("aria-pressed"), "true");
   await assertNoHorizontalOverflow(page, "filtered results");
 
   /* One more back leaves the desk: no step of a closed sheet is in the way. */
@@ -465,6 +467,58 @@ suite.test("a filter changed in the phone's filter sheet stays on the address ba
   await eventually(() => assert.equal(new URL(page.url()).searchParams.get("nonStop"), "1"));
   await page.goBack();
   await filterSheet.waitFor({ state: "hidden" });
-  await filters.removeChip(page, "Directo").waitFor();
+  await eventually(async () => assert.equal(await filters.quick(page, "Directo").getAttribute("aria-pressed"), "true"));
   assert.equal(new URL(page.url()).searchParams.get("nonStop"), "1", "the list is filtered but the address bar no longer says so");
+});
+
+/* LIM–AQP one way: a direct flight in the morning and one in the afternoon,
+   and a cheaper connection at night. */
+const AREQUIPA: OfferSpec[] = [
+  { outbound: ["LA2111 LIM-AQP 06:10-07:40"], price: 99, baggage: { carryOn: true, checked: 1 } },
+  { outbound: ["H2 5301 LIM-AQP 14:20-15:50"], price: 89, baggage: { carryOn: true, checked: 0 } },
+  { outbound: ["JA7011 LIM-CUZ 19:05-20:25", "JA7015 CUZ-AQP 21:30-22:25"], price: 79, baggage: { carryOn: true, checked: 0 } },
+];
+
+suite.test("at 360 wide the filter row carries one-tap «Directo» and departure times that mirror the sheet, and scrolls inside itself", async (scope) => {
+  scope.fake.setFlights("cbplus", { origin: "LIM", destination: "AQP" }, AREQUIPA);
+  const { page } = await scope.signedInPage(searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "AQP", departure: day(48) }), SMALL_PHONE);
+  await waitForResults(page, 3);
+  const departures = async () => (await readCards(page)).map((card) => card.legs[0]!.departs);
+
+  /* One tap each: «Directo», then the morning; the row's toggles say what is on. */
+  await filters.quick(page, "Directo").tap();
+  await eventually(async () => assert.deepEqual(await departures(), ["14:20", "06:10"]));
+  assert.equal(new URL(page.url()).searchParams.get("nonStop"), "1");
+  await filters.quick(page, "Salida mañana").tap();
+  await eventually(async () => assert.deepEqual(await departures(), ["06:10"]));
+  assert.equal(await filters.quick(page, "Salida mañana").getAttribute("aria-pressed"), "true");
+  assert.equal(await filters.removeChip(page, "Directo").count(), 0, "a filter on is said twice, by its toggle and a chip");
+
+  /* The row's last toggle is in reach by scrolling the row, and the page never scrolls sideways. */
+  await assertNoHorizontalOverflow(page, "quick filters");
+  await filters.quick(page, "Salida noche").scrollIntoViewIfNeeded();
+  assert.ok(await isOnScreen(filters.quick(page, "Salida noche")), "«Noche» cannot be reached in the filter row");
+  await assertNoHorizontalOverflow(page, "quick filters scrolled");
+
+  /* The sheet shows what the row chose, and the row what the sheet chooses. */
+  await results.openFilters(page).tap();
+  const sheet = filters.sheet(page);
+  await sheet.waitFor();
+  assert.equal(await filters.stops(sheet, "Directo").getAttribute("aria-checked"), "true");
+  assert.equal(await filters.period(sheet, "Salida", "Mañana").getAttribute("aria-pressed"), "true");
+  await filters.period(sheet, "Salida", "Tarde").tap();
+  await filters.period(sheet, "Llegada", "Mañana").tap();
+  await page.goBack();
+  await sheet.waitFor({ state: "hidden" });
+  assert.equal(await filters.quick(page, "Salida tarde").getAttribute("aria-pressed"), "true");
+  await eventually(async () => assert.deepEqual(await departures(), ["06:10"]));
+
+  /* The arrival has no toggle in the row: its chip takes it off. */
+  await filters.removeChip(page, "Llegada mañana").tap();
+  await eventually(async () => assert.deepEqual(await departures(), ["14:20", "06:10"]));
+  await filters.quick(page, "Directo").tap();
+  await eventually(async () => assert.deepEqual(await departures(), ["14:20", "06:10"]));
+  await filters.quick(page, "Salida mañana").tap();
+  await filters.quick(page, "Salida tarde").tap();
+  await eventually(async () => assert.deepEqual(await departures(), ["19:05", "14:20", "06:10"]));
 });

@@ -238,6 +238,8 @@ export const filters = {
   sheet: (page: Page) => page.getByRole("dialog", { name: "Filtros", exact: true }),
   /** The phone's chip for an active filter, and its way out. */
   removeChip: (page: Page, label: string) => page.getByRole("button", { name: `Quitar filtro ${label}` }),
+  /** A one-tap toggle of the phone's filter row: «Directo», «Salida mañana», «Salida tarde», «Salida noche». */
+  quick: (page: Page, name: "Directo" | `Salida ${"mañana" | "tarde" | "noche"}`) => page.getByRole("button", { name, exact: true }),
   stops: (root: Root, value: StopsLabel) =>
     root.getByRole("radiogroup", { name: "Escalas", exact: true }).getByRole("radio", { name: value, exact: true }),
   /** A part of the day the outbound leaves («Salida») or lands («Llegada») in; a toggle. */

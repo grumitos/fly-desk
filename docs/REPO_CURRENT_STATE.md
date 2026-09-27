@@ -32,6 +32,7 @@ The repository does not version generated artifacts:
 - one continuous list of results, with backend warnings: it opens on what the column measures and grows by two columns whenever the end of the window comes within 900 px of the list viewport, inside that viewport's own scroller on every layout. There is no pager and no page state; a filter or a sort returns the list to its first row, a provider answering does not
 - the results viewport (`.fd-list-viewport`) owns the list's scroll and holds the zero-height sentinel the window grows from; it draws no scrollbar on desk or phone
 - on a phone the title bar is drawn at rest only: once a search exists it is hidden and its copy action is rehoused at the right end of the filter row, which is 48 px of screen returned to the list
+- the phone's filter row carries one-tap toggles beside «Filtros»: «Directo» and the departure's «Mañana», «Tarde» and «Noche», each the sheet's own state and shown instead of its chip while on. The row scrolls inside itself, never the page
 - per-person price only for all-adult groups; mixed adult/child/infant searches
   keep the provider total until a real passenger-type breakdown exists
 - side panel with price, known baggage/conditions, purchase paths, and quotation through the shared quotation core: a live fare whose search answered in the last 15 minutes is quoted as the list has it, with no provider request; an older one is revalidated with the provider for the exact flight first, and a verified price is reusable for at most 15 minutes

@@ -1406,10 +1406,24 @@
     }
   }
 
+  /* The row's right gutter, past the pinned copy: what scrolls under the
+     button does not show again beyond it. */
+  .fd-filter-strip-copy::after {
+    position: absolute;
+    top: -1px;
+    bottom: -1px;
+    left: calc(100% + 1px);
+    width: 12px;
+    background: var(--color-background);
+    content: "";
+  }
+
+  /* A toggle brought into view (by focus, say) stops short of the pinned copy. */
   .fd-filter-strip {
     flex-wrap: nowrap;
     overflow-x: auto;
     padding: 8px 12px 0;
+    scroll-padding-right: calc(var(--fd-control-touch) + 18px);
     scrollbar-width: none;
   }
 
@@ -1438,6 +1452,21 @@
     border-color: transparent;
     background: var(--color-primary);
     color: var(--color-primary-foreground);
+  }
+
+  /* A secondary button the size of the chips beside it; on, it takes the
+     chip's wash and edge, a chosen value rather than an action. */
+  .fd-quick-filter {
+    height: var(--fd-control-touch);
+    flex-shrink: 0;
+    gap: 6px;
+    padding-inline: 12px;
+    color: var(--color-foreground);
+  }
+
+  .fd-quick-filter[aria-pressed="true"] {
+    border-color: var(--color-border-active);
+    background-color: var(--color-selected);
   }
 
   /* Small controls keep their drawing and take a touch-sized target. */
