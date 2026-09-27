@@ -218,6 +218,10 @@ export const results = {
   partialPill: (page: Page) => results.headerLine(page).getByText("Parcial", { exact: true }),
   stoppedPill: (page: Page) => results.headerLine(page).getByText("Detenida", { exact: true }),
   emptyTitle: (page: Page, title: string) => page.getByRole("heading", { name: title, level: 3 }),
+  /** What an empty list says, by its words: «… El filtro de llegada tarde es el que descarta más.» */
+  emptyText: (page: Page, text: string) => page.getByText(text),
+  /** An empty list's way out, by its label: «Quitar el filtro», «Quitar «Llegada tarde»». */
+  emptyAction: (page: Page, label: string) => page.getByRole("button", { name: label, exact: true }),
   /** The way out of an empty or failed list: back to the form. */
   editSearchFromEmpty: (page: Page) => page.getByRole("button", { name: "Volver a editar la búsqueda" }),
   /** The scroller the list grows inside. */
@@ -228,6 +232,7 @@ export const results = {
 /* ---- Filters: the desk column, or the phone's «Filtros» sheet ---- */
 
 export type StopsLabel = "Todos" | "Directo" | "1" | "2+";
+export type DayPart = "Mañana" | "Tarde" | "Noche";
 
 export const filters = {
   sheet: (page: Page) => page.getByRole("dialog", { name: "Filtros", exact: true }),
@@ -235,6 +240,9 @@ export const filters = {
   removeChip: (page: Page, label: string) => page.getByRole("button", { name: `Quitar filtro ${label}` }),
   stops: (root: Root, value: StopsLabel) =>
     root.getByRole("radiogroup", { name: "Escalas", exact: true }).getByRole("radio", { name: value, exact: true }),
+  /** A part of the day the outbound leaves («Salida») or lands («Llegada») in; a toggle. */
+  period: (root: Root, time: "Salida" | "Llegada", part: DayPart) =>
+    root.getByRole("group", { name: time, exact: true }).getByRole("button", { name: part, exact: true }),
   airline: (root: Root, name: string) => root.getByRole("checkbox", { name, exact: true }),
   clear: (root: Root) => root.getByRole("button", { name: "Limpiar filtros" }),
   /** The sheet's primary, «Ver N vuelos». */

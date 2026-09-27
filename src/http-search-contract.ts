@@ -1,3 +1,4 @@
+import { readTimeOfDayPeriods } from "./core/filtering";
 import {
   diffDays,
   normalizeFlexibleRoundTripRequest,
@@ -208,6 +209,8 @@ function normalizeRequest(
       maxDepartureMinutes: numberValue(filters.maxDepartureMinutes),
       minArrivalMinutes: numberValue(filters.minArrivalMinutes),
       maxArrivalMinutes: numberValue(filters.maxArrivalMinutes),
+      departurePeriods: readTimeOfDayPeriods(filters.departurePeriods),
+      arrivalPeriods: readTimeOfDayPeriods(filters.arrivalPeriods),
       carryOnRequired: booleanValue(filters.carryOnRequired, false),
       checkedBaggageRequired: booleanValue(filters.checkedBaggageRequired, false),
       baggageRequired: booleanValue(filters.baggageRequired, false),

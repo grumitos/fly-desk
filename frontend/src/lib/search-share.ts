@@ -2,6 +2,7 @@ import { fromBackendRequest, toBackendPayload, type BackendSearchRequest } from 
 import { writeClipboardText } from "@/lib/clipboard"
 import { isIsoMonth } from "@/lib/iso-date"
 import { isSortMode, type SearchRequest, type SortMode } from "@/types"
+import { readTimeOfDayPeriods } from "../../../src/core/filtering"
 
 const SEARCH_SHARE_PAYLOAD_TYPE = "fly-desk-search-config"
 const SEARCH_SHARE_PAYLOAD_VERSION = 2
@@ -37,6 +38,8 @@ const SHARED_SEARCH_QUERY_PARAMS = [
   "baggage",
   "airlines",
   "airline",
+  "departureTime",
+  "arrivalTime",
   "months",
   "month",
 ]
@@ -198,6 +201,8 @@ function readReadableSharedSearchFromUrl(url: URL): SharedSearchState | null {
     checkedBaggageRequired: boolParam(params, "checkedBaggage") || boolParam(params, "baggage"),
     baggageRequired: boolParam(params, "baggage"),
     includedAirlineCodes: includedAirlineCodes.length ? includedAirlineCodes : undefined,
+    departurePeriods: readTimeOfDayPeriods(optionalString(params.get("departureTime"))?.split(",")),
+    arrivalPeriods: readTimeOfDayPeriods(optionalString(params.get("arrivalTime"))?.split(",")),
     migrationMonths: migrationMonths.length ? Array.from(new Set(migrationMonths)) : undefined,
   }
 
@@ -236,6 +241,8 @@ function writeReadableSharedSearchParams(url: URL, request: SearchRequest, sortM
   if (request.includedAirlineCodes?.length) {
     setReadableParam(url, "airlines", request.includedAirlineCodes.map((code) => code.toUpperCase()).join(","))
   }
+  if (request.departurePeriods?.length) setReadableParam(url, "departureTime", request.departurePeriods.join(","))
+  if (request.arrivalPeriods?.length) setReadableParam(url, "arrivalTime", request.arrivalPeriods.join(","))
   if (request.searchMode === "month-view" && request.migrationMonths?.length) {
     setReadableParam(url, "months", request.migrationMonths.join(","))
   }
@@ -297,6 +304,8 @@ function normalizeFrontendRequest(value: unknown): SearchRequest | null {
     includedAirlineCodes: Array.isArray(request.includedAirlineCodes)
       ? request.includedAirlineCodes.map(stringValue).filter(Boolean)
       : undefined,
+    departurePeriods: readTimeOfDayPeriods(request.departurePeriods),
+    arrivalPeriods: readTimeOfDayPeriods(request.arrivalPeriods),
     migrationMonths: Array.isArray(request.migrationMonths)
       ? Array.from(new Set(request.migrationMonths.map(stringValue).filter(isIsoMonth)))
       : undefined,

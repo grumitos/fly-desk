@@ -7,6 +7,7 @@ import type {
   SearchRequest,
   SearchJobResponse,
   SortMode,
+  TimeOfDayPeriod,
 } from "@/types"
 import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
 import { getBrowserClientSessionId } from "@/lib/browser-client-session"
@@ -28,7 +29,7 @@ import {
   returnItineraryForOffer,
 } from "@/lib/offer-display"
 import { MIGRATION_CONCURRENT_MONTHS, deskToday } from "@/lib/runtime-config"
-import { offerAirlineCode } from "../../../src/core/filtering"
+import { offerAirlineCode, readTimeOfDayPeriods } from "../../../src/core/filtering"
 import { normalizeLocationSearchText, rankLocationSuggestions } from "../../../src/core/location-ranking"
 import { compareOffers } from "../../../src/core/ranking"
 
@@ -622,6 +623,8 @@ export type BackendSearchRequest = {
     maxStops?: number
     maxLayoverMinutes?: number
     includedAirlineCodes?: string[]
+    departurePeriods?: TimeOfDayPeriod[]
+    arrivalPeriods?: TimeOfDayPeriod[]
   }
   currencyCode?: string
   locale?: string
@@ -700,6 +703,8 @@ export function toBackendPayload(request: SearchRequest, sortMode: SortMode): Ba
         maxStops,
         maxLayoverMinutes: request.maxLayoverMinutes ? Number(request.maxLayoverMinutes) : undefined,
         includedAirlineCodes: request.includedAirlineCodes?.length ? request.includedAirlineCodes : undefined,
+        departurePeriods: request.departurePeriods?.length ? request.departurePeriods : undefined,
+        arrivalPeriods: request.arrivalPeriods?.length ? request.arrivalPeriods : undefined,
       },
       currencyCode: "USD",
       locale: "es-PE",
@@ -737,6 +742,8 @@ export function fromBackendRequest(request: BackendSearchRequest | undefined): S
     baggageRequired: request?.filters?.baggageRequired,
     maxLayoverMinutes: request?.filters?.maxLayoverMinutes?.toString(),
     includedAirlineCodes: request?.filters?.includedAirlineCodes,
+    departurePeriods: readTimeOfDayPeriods(request?.filters?.departurePeriods),
+    arrivalPeriods: readTimeOfDayPeriods(request?.filters?.arrivalPeriods),
   }
 }
 
@@ -1051,6 +1058,8 @@ export function migrationRequestForMonth(
     checkedBaggageRequired: false,
     baggageRequired: false,
     includedAirlineCodes: undefined,
+    departurePeriods: undefined,
+    arrivalPeriods: undefined,
   }
 }
 

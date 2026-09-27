@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { memo, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { DetailPanel } from "@/components/DetailPanel"
 import { ProviderRail } from "@/components/ProviderRail"
 import { QuotationPastePreview } from "@/components/QuotationPastePreview"
@@ -44,9 +44,9 @@ import {
   writeSharedSearchToUrl,
   type SharedSearchState,
 } from "@/lib/search-share"
-import { isSortMode, type CanonicalOffer, type SearchJobResponse, type SearchRequest, type SortMode } from "@/types"
+import { isSortMode, type CanonicalOffer, type SearchJobResponse, type SearchRequest, type SortMode, type TimeOfDayPeriod } from "@/types"
 import { airlineLogoAssetPath } from "../../src/core/airline-assets"
-import { offerAirlineCode, offerMatchesFilters, type OfferFilters } from "../../src/core/filtering"
+import { offerAirlineCode, offerMatchesFilters, readTimeOfDayPeriods, type OfferFilters } from "../../src/core/filtering"
 import { parseCommercialQuotation, type CommercialQuotationParseResult } from "../../src/core/quotation-parser"
 import { compareOffers } from "../../src/core/ranking"
 
@@ -59,6 +59,8 @@ type Filters = {
   maxLayoverMinutes?: string
   carryOnRequired?: boolean
   checkedBaggageRequired?: boolean
+  departurePeriods?: TimeOfDayPeriod[]
+  arrivalPeriods?: TimeOfDayPeriod[]
 }
 
 /* How the list is read. It outlives a search: it rides the link and the
@@ -114,6 +116,19 @@ const BAGGAGE_SEGMENTS: Array<{ value: BaggageFilterValue; label: string; icon?:
   { value: "carry", label: "Mano", icon: "cabinBag", chip: "Mano incluida" },
   { value: "checked", label: "Bodega", icon: "holdBag", chip: "Bodega incluida", relaxTo: "carry", relaxLabel: "Permitir vuelos sin bodega" },
 ]
+/* The outbound's departure and arrival by part of the day, on the airports'
+   clocks (`src/core/filtering.ts`): toggles, since within a group the parts
+   add up and none on is any time. */
+const TIME_PERIODS: Array<{ value: TimeOfDayPeriod; label: string; icon: AppIconName }> = [
+  { value: "morning", label: "Mañana", icon: "sunrise" },
+  { value: "afternoon", label: "Tarde", icon: "sun" },
+  { value: "night", label: "Noche", icon: "moon" },
+]
+const TIME_GROUPS = [
+  { axis: "departure", key: "departurePeriods", label: "Salida" },
+  { axis: "arrival", key: "arrivalPeriods", label: "Llegada" },
+] as const
+type TimeGroup = (typeof TIME_GROUPS)[number]
 
 export default function App() {
   const { results, loading, error, statusMessage, diagnosticLog, runSearch, restoreJob, cancel } = useSearch()
@@ -468,10 +483,16 @@ export default function App() {
     } else if (id === "baggage") {
       handleFilterChange(baggageFilterPatch("any"))
     } else {
+      const group = TIME_GROUPS.find((candidate) => id.startsWith(`${candidate.axis}:`))
+      const period = TIME_PERIODS.find((candidate) => id === `${group?.axis}:${candidate.value}`)
+      if (group && period) {
+        handleFilterChange(timePeriodPatch(filters, group, period.value))
+        return
+      }
       const airline = airlineOptions.find((option) => airlineChipId(option) === id)
       if (airline) toggleAirline(airline)
     }
-  }, [airlineOptions, handleFilterChange, toggleAirline])
+  }, [airlineOptions, filters, handleFilterChange, toggleAirline])
 
   /* Plate 2g: with the list empty, the filter whose removal recovers most
      offers is named; a tie or no recovery names none rather than guess. */
@@ -1100,6 +1121,35 @@ const FiltersPanel = memo(function FiltersPanel({
           </SegmentedControl>
         </FilterGroup>
 
+        {TIME_GROUPS.map((group) => (
+          <FilterGroup key={group.key} label={group.label}>
+            {/* Drawn as the groups above, but toggles: several can be on. */}
+            <div
+              role="group"
+              aria-label={group.label}
+              className="fd-segmented"
+              style={{ "--fd-segments": TIME_PERIODS.length } as CSSProperties}
+            >
+              {TIME_PERIODS.map((period) => {
+                const on = filters[group.key]?.includes(period.value) ?? false
+                return (
+                  <button
+                    key={period.value}
+                    type="button"
+                    className="fd-segmented-item"
+                    data-state={on ? "on" : "off"}
+                    aria-pressed={on}
+                    onClick={() => onFilterChange(timePeriodPatch(filters, group, period.value))}
+                  >
+                    <AppIcon name={period.icon} size={16} />
+                    {period.label}
+                  </button>
+                )
+              })}
+            </div>
+          </FilterGroup>
+        ))}
+
         {allAirlines.length > 0 && (
           <div className="fd-filter-group fd-filter-group--airlines">
             <div className="fd-filter-group-head">
@@ -1179,6 +1229,15 @@ function buildActiveFilterChips(
   const baggageSegment = BAGGAGE_SEGMENTS.find((segment) => segment.value === baggageFilterValue(filters))
   if (baggageSegment?.chip) chips.push({ id: "baggage", label: baggageSegment.chip })
 
+  /* «Salida mañana»: one chip per part of the day, as one per airline. */
+  for (const group of TIME_GROUPS) {
+    for (const period of TIME_PERIODS) {
+      if (filters[group.key]?.includes(period.value)) {
+        chips.push({ id: `${group.axis}:${period.value}`, label: `${group.label} ${period.label.toLocaleLowerCase("es-PE")}` })
+      }
+    }
+  }
+
   allAirlines
     .filter((airline) => isAirlineFilterSelected(airline, selectedAirlines))
     .forEach((airline) => chips.push({ id: airlineChipId(airline), label: airline.label }))
@@ -1211,14 +1270,44 @@ function baggageFilterPatch(value: BaggageFilterValue): Partial<Filters> {
   }
 }
 
+/* One part of the day on or off in its group, in the catalogue's order; a
+   group with none on is no filter. */
+function timePeriodPatch(filters: Filters, group: TimeGroup, period: TimeOfDayPeriod): Partial<Filters> {
+  const current = filters[group.key] ?? []
+  const next = TIME_PERIODS
+    .map((option) => option.value)
+    .filter((value) => (value === period ? !current.includes(value) : current.includes(value)))
+  return timePeriodsPatch(group, next.length > 0 ? next : undefined)
+}
+
+function timePeriodsPatch(group: TimeGroup, periods: TimeOfDayPeriod[] | undefined): Partial<Filters> {
+  return group.key === "departurePeriods" ? { departurePeriods: periods } : { arrivalPeriods: periods }
+}
+
+function timeGroup(axis: TimeGroup["axis"]): TimeGroup {
+  return axis === "departure" ? TIME_GROUPS[0] : TIME_GROUPS[1]
+}
+
+/* «Salida mañana o tarde»: the group and the parts of the day it keeps. */
+function timeGroupLabel(group: TimeGroup, filters: Filters): string {
+  const labels = TIME_PERIODS
+    .filter((period) => filters[group.key]?.includes(period.value))
+    .map((period) => period.label.toLocaleLowerCase("es-PE"))
+  const list = labels.length > 1 ? `${labels.slice(0, -1).join(", ")} o ${labels.at(-1)}` : labels[0] ?? ""
+  return `${group.label} ${list}`
+}
+
 /* Plate 2g asks about axes, not chips: three airlines are one filter with one way out. */
-type FilterAxis = "stops" | "layover" | "baggage" | "airlines"
+type FilterAxis = "stops" | "layover" | "baggage" | "airlines" | TimeGroup["axis"]
 
 function activeFilterAxes(filters: Filters, selectedAirlines: string[]): FilterAxis[] {
   const axes: FilterAxis[] = []
   if (stopFilterValue(filters) !== "any") axes.push("stops")
   if (layoverFilterValue(filters) !== "any") axes.push("layover")
   if (baggageFilterValue(filters) !== "any") axes.push("baggage")
+  for (const group of TIME_GROUPS) {
+    if (filters[group.key]?.length) axes.push(group.axis)
+  }
   if (selectedAirlines.length > 0) axes.push("airlines")
   return axes
 }
@@ -1231,6 +1320,9 @@ function filtersWithoutAxis(filters: Filters, axis: FilterAxis): Filters {
       return { ...filters, ...layoverFilterPatch("any") }
     case "baggage":
       return { ...filters, ...baggageFilterPatch("any") }
+    case "departure":
+    case "arrival":
+      return { ...filters, ...timePeriodsPatch(timeGroup(axis), undefined) }
     case "airlines":
       return filters
   }
@@ -1245,6 +1337,9 @@ function culpritFilterName(axis: FilterAxis, filters: Filters): string {
       return LAYOVER_SEGMENTS.find((segment) => segment.value === layoverFilterValue(filters))?.chip ?? ""
     case "baggage":
       return BAGGAGE_SEGMENTS.find((segment) => segment.value === baggageFilterValue(filters))?.chip ?? ""
+    case "departure":
+    case "arrival":
+      return timeGroupLabel(timeGroup(axis), filters)
     case "airlines":
       return "aerolíneas"
   }
@@ -1273,6 +1368,11 @@ function relaxFilterStep(axis: FilterAxis, filters: Filters): { label: string; p
       return segment.relaxTo && segment.relaxLabel
         ? { label: segment.relaxLabel, patch: baggageFilterPatch(segment.relaxTo) }
         : { label: removeFilterLabel(segment.chip), patch: baggageFilterPatch("any") }
+    }
+    case "departure":
+    case "arrival": {
+      const group = timeGroup(axis)
+      return { label: removeFilterLabel(timeGroupLabel(group, filters)), patch: timePeriodsPatch(group, undefined) }
     }
     case "airlines":
       return undefined
@@ -1304,6 +1404,8 @@ function railOfferFilters(filters: Filters, selectedAirlines: string[]): OfferFi
     maxLayoverMinutes: filters.maxLayoverMinutes && Number.isFinite(maxLayover) ? maxLayover : undefined,
     carryOnRequired: filters.carryOnRequired,
     checkedBaggageRequired: filters.checkedBaggageRequired,
+    departurePeriods: filters.departurePeriods,
+    arrivalPeriods: filters.arrivalPeriods,
     includedAirlineCodes: selectedAirlines.length > 0 ? selectedAirlines : undefined,
   }
 }
@@ -1318,6 +1420,8 @@ function withListView(request: SearchRequest, filters: Filters, airlines: string
     carryOnRequired: filters.carryOnRequired,
     checkedBaggageRequired: filters.checkedBaggageRequired,
     baggageRequired: undefined,
+    departurePeriods: filters.departurePeriods,
+    arrivalPeriods: filters.arrivalPeriods,
     includedAirlineCodes: airlines.length > 0 ? airlines : undefined,
   }
 }
@@ -1433,6 +1537,10 @@ function readWorkspacePreferences(): ListView {
     }
     if (typeof stored.carryOnRequired === "boolean") filters.carryOnRequired = stored.carryOnRequired
     if (typeof stored.checkedBaggageRequired === "boolean") filters.checkedBaggageRequired = stored.checkedBaggageRequired
+    const departurePeriods = readTimeOfDayPeriods(stored.departurePeriods)
+    if (departurePeriods) filters.departurePeriods = departurePeriods
+    const arrivalPeriods = readTimeOfDayPeriods(stored.arrivalPeriods)
+    if (arrivalPeriods) filters.arrivalPeriods = arrivalPeriods
 
     return {
       sort: isSortMode(parsed.sortMode) ? parsed.sortMode : DEFAULT_SORT_MODE,
@@ -1514,5 +1622,7 @@ function filtersFromRequest(request: SearchRequest | null | undefined): Filters 
     maxLayoverMinutes: request.maxLayoverMinutes,
     carryOnRequired: request.carryOnRequired,
     checkedBaggageRequired: request.checkedBaggageRequired ?? request.baggageRequired,
+    departurePeriods: request.departurePeriods,
+    arrivalPeriods: request.arrivalPeriods,
   }
 }

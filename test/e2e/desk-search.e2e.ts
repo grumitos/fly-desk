@@ -43,6 +43,7 @@ import {
   signInThroughGate,
   textFontFamilies,
   topBar,
+  type DayPart,
 } from "./support/ui.ts";
 
 /*
@@ -285,6 +286,75 @@ suite.test("an airline's filter keeps the fares it tickets, not those whose firs
   await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: 1, total: 2 }));
   assert.deepEqual((await readCards(page)).map((card) => `${card.airline} ${card.amount}`), ["Iberia 890"]);
   assert.equal(new URL(page.url()).searchParams.get("airlines"), "IB");
+});
+
+/* LIM–MAD and back in January, when Madrid runs six hours ahead: Agil sends
+   wall clocks with no offset and Click and Book Plus stamps -05:00 on Madrid's
+   too. Every return lands at 05:40, so a filter that read the return would
+   find every fare landing in the morning. In price order: */
+const MAD_RETURN = "IB6651 MAD-LIM 23:55-05:40+1";
+const LIM_MAD_TIMES_AGIL: OfferSpec[] = [
+  { outbound: ["IB6650 LIM-MAD 06:30-00:55+1"], inbound: [MAD_RETURN], price: 910, gds: 0 },
+  { outbound: ["LA2480 LIM-MAD 13:10-07:35+1"], inbound: [MAD_RETURN], price: 920, gds: 1 },
+  { outbound: ["AV10 LIM-MAD 05:00-23:30"], inbound: [MAD_RETURN], price: 930, gds: 3 },
+];
+const LIM_MAD_TIMES_CBPLUS: OfferSpec[] = [
+  { outbound: ["UX176 LIM-MAD 19:45-14:10+1"], inbound: [MAD_RETURN], price: 940 },
+  { outbound: ["IB6652 LIM-MAD 04:59-23:05"], inbound: [MAD_RETURN], price: 950 },
+];
+
+suite.test("the rail keeps the fares whose outbound leaves and lands in the parts of the day chosen, on the airports' clocks, and the choice travels as the other filters do", async (scope) => {
+  const { fake } = scope;
+  fake.setFlights("agil", { origin: "LIM", destination: "MAD" }, LIM_MAD_TIMES_AGIL);
+  fake.setFlights("cbplus", { origin: "LIM", destination: "MAD" }, LIM_MAD_TIMES_CBPLUS);
+  const { page } = await scope.signedInPage(searchLink({ mode: "exact", trip: "round-trip", origin: "LIM", destination: "MAD", departure: day(70), return: day(77) }));
+  await waitForResults(page, 5);
+  const departures = async () => (await readCards(page)).map((card) => card.legs[0]!.departs);
+  const toggle = async (time: "Salida" | "Llegada", part: DayPart) => filters.period(page, time, part).click();
+
+  /* Within «Salida» the parts of the day add up; 05:00 is morning, 04:59 night. */
+  await toggle("Salida", "Mañana");
+  await eventually(async () => assert.deepEqual(await departures(), ["06:30", "05:00"]));
+  assert.equal(await filters.period(page, "Salida", "Mañana").getAttribute("aria-pressed"), "true");
+  await toggle("Salida", "Tarde");
+  await eventually(async () => assert.deepEqual(await departures(), ["06:30", "13:10", "05:00"]));
+  assert.equal(new URL(page.url()).searchParams.get("departureTime"), "morning,afternoon");
+
+  /* «Llegada» reads the outbound's landing on Madrid's own clock: 00:55 is
+     night, whatever a UTC reading of Agil's wall clock would say. */
+  await toggle("Salida", "Mañana");
+  await toggle("Salida", "Tarde");
+  await toggle("Llegada", "Mañana");
+  await eventually(async () => assert.deepEqual(await departures(), ["13:10"]));
+  await toggle("Llegada", "Mañana");
+
+  /* The groups narrow each other, and 14:10 stamped -05:00 is still afternoon. */
+  await toggle("Salida", "Noche");
+  await toggle("Llegada", "Tarde");
+  await eventually(async () => assert.deepEqual(await departures(), ["19:45"]));
+  assert.equal((await readCards(page))[0]!.legs[0]!.arrives, "14:10");
+
+  /* Nothing leaves in the morning and lands in the afternoon: the filter to blame is named. */
+  await toggle("Salida", "Noche");
+  await toggle("Salida", "Mañana");
+  await results.emptyTitle(page, "Ningún vuelo cumple los dos filtros").waitFor();
+  await results.emptyText(page, "El filtro de llegada tarde es el que descarta más.").waitFor();
+  await results.emptyAction(page, "Quitar «Llegada tarde»").click();
+  await eventually(async () => assert.deepEqual(await departures(), ["06:30", "05:00"]));
+
+  /* It travels as the other filters do: in the search the backend keeps, in
+     the tab's view and in the link. */
+  const job = await runSearch<SearchJob & { request?: { filters?: Record<string, unknown> } }>(page);
+  assert.deepEqual(job.request?.filters?.departurePeriods, ["morning"]);
+  assert.equal(job.request?.filters?.arrivalPeriods, undefined);
+  await waitForResults(page, 5);
+  const view = await page.evaluate(() => sessionStorage.getItem("fly-desk:workspace-preferences:v1"));
+  assert.deepEqual((JSON.parse(view ?? "{}") as { filters?: Record<string, unknown> }).filters?.departurePeriods, ["morning"]);
+  const shared = new URL(page.url());
+  const { page: opened } = await scope.signedInPage(`${shared.pathname}${shared.search}`);
+  await waitForResults(opened, 5);
+  assert.equal(await filters.period(opened, "Salida", "Mañana").getAttribute("aria-pressed"), "true");
+  assert.deepEqual((await readCards(opened)).map((card) => card.legs[0]!.departs), ["06:30", "05:00"]);
 });
 
 suite.test("the migratory text is chosen in the quote, whose switch rewrites the text it shows and copies it, and the offer column keeps only its actions", async (scope) => {
