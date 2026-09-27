@@ -291,8 +291,9 @@
 
   /* The shared search capacity: a gauge and a tabular «3/7» in a cell of the
      capsules' height and radius. Muted like the capsules' glyphs while nothing
-     runs, in ink while a search runs, and in the «En espera» line's colours
-     while one waits. Blank, with its box kept, while it cannot be read. */
+     runs, in ink while a search runs, the gauge in the warning colour while
+     every cupo is in use, and in the «En espera» line's colours while a
+     search waits. Faded blank, with its box kept, while it cannot be read. */
   .fd-capacity {
     display: inline-flex;
     height: var(--fd-control-standard);
@@ -310,11 +311,32 @@
     transition:
       background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
       box-shadow var(--fd-dur-tacto) var(--fd-ease-tacto),
-      color var(--fd-dur-tacto) var(--fd-ease-tacto);
+      color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      opacity var(--fd-dur-emergente) var(--fd-ease-tacto),
+      visibility var(--fd-dur-emergente) var(--fd-ease-tacto);
   }
 
-  .fd-capacity[data-state="busy"] {
+  .fd-capacity svg {
+    transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  /* The needle points at the share of cupos in use, from the arc's left end
+     (none) to its right end (all), and travels when it changes. It is the
+     first path of lucide's gauge, drawn at 45° and turned on the arc's centre. */
+  .fd-capacity .lucide-gauge > path:first-child {
+    transform: rotate(calc(var(--fd-capacity-fill, 0) * 240deg - 165deg));
+    transform-box: view-box;
+    transform-origin: 50% 58.333%;
+    transition: transform var(--fd-dur-estructura) var(--fd-ease-estructura);
+  }
+
+  .fd-capacity[data-state="busy"],
+  .fd-capacity[data-state="full"] {
     color: var(--color-foreground);
+  }
+
+  .fd-capacity[data-state="full"] svg {
+    color: var(--color-warning);
   }
 
   .fd-capacity[data-state="waiting"] {
@@ -323,7 +345,13 @@
     color: var(--color-warning-soft-foreground);
   }
 
+  /* The clock breathes until the search starts; reduced motion holds it. */
+  .fd-capacity[data-state="waiting"] svg {
+    animation: fd-pulso var(--fd-dur-pulso) var(--fd-ease-pulso) infinite;
+  }
+
   .fd-capacity[data-state="unknown"] {
+    opacity: 0;
     visibility: hidden;
   }
 
@@ -628,8 +656,8 @@
     color: var(--color-primary-foreground);
   }
 
-  /* The right gutter is shared by the header and the rows so their lanes end
-     on the same pixel; the viewport inside is the only scroller. */
+  /* The column head and the rows share this box, so their lanes end on the
+     same pixel; the viewport inside is the only scroller. */
   .fd-list-body {
     position: relative;
     display: flex;
@@ -637,7 +665,6 @@
     flex: 1;
     flex-direction: column;
     overflow: hidden;
-    padding-right: 10px;
   }
 
   .fd-back-to-top {
@@ -959,7 +986,7 @@
   .fd-topbar-inner {
     min-height: 48px;
     height: 48px;
-    padding: 0 calc(12px + env(safe-area-inset-right, 0px)) 0 calc(12px + env(safe-area-inset-left, 0px));
+    padding: 0 calc(14px + env(safe-area-inset-right, 0px)) 0 calc(14px + env(safe-area-inset-left, 0px));
   }
 
   .fd-topbar[data-workspace-active="true"] {
@@ -1022,6 +1049,12 @@
     gap: 8px;
   }
 
+  /* Closed, the flexible options leave the column instead of holding an
+     empty row, so the mode and trip segments stand the form's one gap apart. */
+  .fd-inline-reveal-closed {
+    position: absolute;
+  }
+
   .fd-trip-mode-controls > .fd-segmented {
     width: auto;
   }
@@ -1033,6 +1066,12 @@
 
   .fd-stay-counter {
     height: var(--fd-control-touch-lg);
+  }
+
+  /* «Estadía» starts where the fields' labels do: 14px inside the border,
+     the group's own 2px included. */
+  .fd-stay-counter--stretch .fd-stay-label {
+    padding-left: 12px;
   }
 
   .fd-stay-counter-step {
@@ -1090,14 +1129,16 @@
     gap: 8px;
   }
 
+  /* The label (11px at 9px) and the 19px value line, 2px apart, centre
+     together in a 50px field, as the desk's do in theirs. */
   .fd-field-control {
-    --fd-field-label-band: 16px;
+    --fd-field-label-band: 13px;
     gap: 10px;
     padding: var(--fd-field-label-band) 14px 0;
   }
 
   .fd-field-label {
-    top: 10px;
+    top: 9px;
     left: 14px;
   }
 
@@ -1213,7 +1254,7 @@
   }
 
   .fd-daterange-half {
-    --fd-field-label-band: 16px;
+    --fd-field-label-band: 13px;
     gap: 10px;
     padding: var(--fd-field-label-band) 12px 0 14px;
   }
@@ -1465,10 +1506,6 @@
 
   .fd-list-viewport {
     padding: 0 12px calc(12px + env(safe-area-inset-bottom, 0px));
-  }
-
-  .fd-list-body {
-    padding-right: 0;
   }
 
   .fd-card--head {

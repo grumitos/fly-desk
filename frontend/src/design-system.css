@@ -767,7 +767,8 @@
 
   .fd-motion-giro,
   .fd-skeleton-block,
-  .fd-card--skeleton {
+  .fd-card--skeleton,
+  .fd-capacity svg {
     animation: none !important;
   }
 

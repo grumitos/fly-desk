@@ -10,9 +10,9 @@ import {
 import "./result-card.css"
 
 /*
- * Plate 1b — the result row: logo, «who flies», the two legs, baggage, price
- * and provider. Every track is derived in `result-card.css`. Alternative
- * schedules are one strip inside the row that owns them.
+ * Plate 1b — the result row: logo, «who flies», the two legs, the price with
+ * its baggage, and the provider. Every track is derived in `result-card.css`.
+ * Alternative schedules are one strip inside the row that owns them.
  */
 
 export type AlternateSchedule = {
@@ -108,22 +108,22 @@ export const ResultCard = memo(function ResultCard({
         ))}
       </div>
 
-      {model.baggage.shown && (
-        <span className="fd-card__baggage" title={model.baggage.title} aria-hidden="true">
-          {model.baggage.carryOnIncluded !== undefined && (
-            <span className={cn("fd-card__bag", model.baggage.carryOnIncluded ? "is-included" : "is-missing")}>
-              <AppIcon name="cabinBag" size={14} />
-            </span>
-          )}
-          {model.baggage.checkedIncluded !== undefined && (
-            <span className={cn("fd-card__bag", model.baggage.checkedIncluded ? "is-included" : "is-missing")}>
-              <AppIcon name="holdBag" size={14} />
-            </span>
-          )}
-        </span>
-      )}
-
+      {/* The baggage pair rides in the price cell, left of the figure. */}
       <div className="fd-card__price" aria-hidden="true">
+        {model.baggage.shown && (
+          <span className="fd-card__baggage" title={model.baggage.title}>
+            {model.baggage.carryOnIncluded !== undefined && (
+              <span className={cn("fd-card__bag", model.baggage.carryOnIncluded ? "is-included" : "is-missing")}>
+                <AppIcon name="cabinBag" size={14} />
+              </span>
+            )}
+            {model.baggage.checkedIncluded !== undefined && (
+              <span className={cn("fd-card__bag", model.baggage.checkedIncluded ? "is-included" : "is-missing")}>
+                <AppIcon name="holdBag" size={14} />
+              </span>
+            )}
+          </span>
+        )}
         <span className="fd-card__price-figure">{model.price.label}</span>
         {model.price.perPersonLabel ? (
           <span className="fd-card__price-meta">{model.price.perPersonLabel} p/p</span>
