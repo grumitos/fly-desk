@@ -451,6 +451,12 @@
     white-space: nowrap;
   }
 
+  /* The heading names the logo and the name together, so it starts where the
+     row does rather than a logo's width in. */
+  .fd-card__head-label--carrier {
+    grid-column: 1 / span 2;
+  }
+
   .fd-card__head-label--end {
     justify-self: end;
     text-align: right;

@@ -319,8 +319,7 @@ const ResultsColumnHead = memo(function ResultsColumnHead({ sort, onSort }: { so
       data-testid="results-column-head"
       onKeyDown={handleKeyDown}
     >
-      <span aria-hidden="true" />
-      <span className="fd-card__head-label">Aerolínea</span>
+      <span className="fd-card__head-label fd-card__head-label--carrier">Aerolínea</span>
       <div className="fd-card__legs">
         <div className="fd-card__leg">
           <span className="fd-card__head-label">Tramo</span>
