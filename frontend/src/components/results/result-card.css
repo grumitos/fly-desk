@@ -3,23 +3,24 @@
    is drawn in. Below 787px of list the row becomes the stacked phone card. */
 
 @layer utilities {
-  /* The lanes at their floors (logo 28, carrier 142, legs 359, baggage 36,
-     price 116, provider 26, 12px gaps, 10px padding at each end) make the
-     787px stacking threshold; useShellSize.ts derives its 428 and 284 from
-     them. The same padding at both ends keeps a row's edges as far from the
-     filter rail's rule as from the detail's. */
+  /* The lanes at their floors (logo 28, carrier 142, legs 359, price 164 with
+     the baggage pair in it, provider 26, 12px gaps, 10px padding at each end)
+     make the 787px stacking threshold; useShellSize.ts derives its 428 and 284
+     from them. The same padding at both ends keeps a row's edges as far from
+     the filter rail's rule as from the detail's. Past the lanes' own growth
+     the slack goes to the two lanes of text, «who flies» and the legs, so the
+     row reads in three blocks and the price stays beside its provider. */
   .fd-card {
     position: relative;
     display: grid;
     --fd-row-slack: max(0px, 100% - 767px);
-    --fd-row-share: calc(max(0px, var(--fd-row-slack) - 115px) / 4);
+    --fd-row-share: calc(max(0px, var(--fd-row-slack) - 115px) / 2);
     grid-template-columns:
       28px
       calc(clamp(142px, calc(142px + var(--fd-row-slack) - 68px), 170px) + var(--fd-row-share))
       calc(clamp(359px, calc(359px + var(--fd-row-slack)), 427px) + var(--fd-row-share))
-      36px
-      calc(clamp(116px, calc(116px + var(--fd-row-slack) - 96px), 135px) + var(--fd-row-share))
-      calc(26px + var(--fd-row-share));
+      clamp(164px, calc(164px + var(--fd-row-slack) - 96px), 183px)
+      26px;
     column-gap: 12px;
     align-items: center;
     min-width: 0;
@@ -134,15 +135,14 @@
     white-space: nowrap;
   }
 
-  /* Placed by column number, like the lanes after it: a fare that says
-     nothing about baggage must not shift the price and provider. */
+  /* The pair sits in the price cell, on the figure's line and left of it; a
+     fare that says nothing about baggage keeps its figure where the others
+     have it. */
   .fd-card__baggage {
-    position: relative;
-    z-index: 0;
     display: inline-flex;
-    grid-column: 4;
+    grid-column: 1;
+    grid-row: 1;
     align-items: center;
-    justify-self: center;
     gap: 4px;
   }
 
@@ -272,13 +272,24 @@
     display: none;
   }
 
+  /* The figure and the per-person line take the second track, the pair the
+     first; the block hugs the lane's end, so the pair stays 16px from the
+     figure at any width. The lane is the pair, that gap and the figure's 116. */
   .fd-card__price {
     display: grid;
+    grid-template-columns: auto auto;
     min-width: 0;
-    grid-column: 5;
+    grid-column: 4;
     align-content: center;
+    align-items: center;
+    justify-content: end;
     justify-items: end;
-    gap: 2px;
+    column-gap: 16px;
+    row-gap: 2px;
+  }
+
+  .fd-card__price > :not(.fd-card__baggage) {
+    grid-column: 2;
   }
 
   .fd-card__price-figure {
@@ -310,7 +321,7 @@
   .fd-card__provider {
     position: relative;
     z-index: 2;
-    grid-column: 6;
+    grid-column: 5;
     pointer-events: none;
   }
 
@@ -464,11 +475,6 @@
     text-align: right;
   }
 
-  .fd-card__head-label--center {
-    justify-self: center;
-    text-align: center;
-  }
-
   /* The sortable columns are the order control (a radio group of four). */
   .fd-card__head-sort {
     display: inline-flex;
@@ -609,7 +615,7 @@
     .fd-card {
       --fd-card-stacked-line: 20px;
 
-      grid-template-columns: 24px minmax(0, 1fr) 32px auto;
+      grid-template-columns: 24px minmax(0, 1fr) auto;
       column-gap: 10px;
       row-gap: 8px;
       align-items: start;
@@ -695,18 +701,16 @@
       content: "· ";
     }
 
-    /* Baggage stays on the carrier line: moving it into the legs would cost
-       the stops lane the airport code at 360px. */
+    /* Baggage stays on the carrier line, beside the price: moving it into the
+       legs would cost the stops lane the airport code at 360px. */
     .fd-card .fd-card__baggage {
-      grid-column: 3;
-      grid-row: 1;
-      align-self: start;
       height: var(--fd-card-stacked-line);
     }
 
     .fd-card .fd-card__price {
-      grid-column: 4;
+      grid-column: 3;
       grid-row: 1;
+      column-gap: 10px;
     }
 
     .fd-card .fd-card__price-figure {

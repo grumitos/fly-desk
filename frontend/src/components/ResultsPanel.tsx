@@ -328,7 +328,6 @@ const ResultsColumnHead = memo(function ResultsColumnHead({ sort, onSort }: { so
           <SortableColumnHead sort={sort} onSort={onSort} mode="stops" label="Escalas" />
         </div>
       </div>
-      <span className="fd-card__head-label fd-card__head-label--center">Eq.</span>
       <SortableColumnHead sort={sort} onSort={onSort} mode="cheapest" label="Precio" align="end" />
       <span className="fd-card__head-label fd-card__head-label--end">Prov.</span>
     </div>
