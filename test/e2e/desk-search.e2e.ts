@@ -287,6 +287,36 @@ suite.test("an airline's filter keeps the fares it tickets, not those whose firs
   assert.equal(new URL(page.url()).searchParams.get("airlines"), "IB");
 });
 
+suite.test("the migratory text is chosen in the quote, whose switch rewrites the text it shows and copies it, and the offer column keeps only its actions", async (scope) => {
+  scope.fake.setFlights("cbplus", { origin: "LIM", destination: "MIA" }, LIM_MIA_CBPLUS);
+  const link = searchLink({ mode: "exact", trip: "round-trip", origin: "LIM", destination: "MIA", departure: day(36), return: day(43) });
+  const { page } = await scope.signedInPage(link, { clipboard: true });
+  /* A Windows clipboard hands text back with CRLF line ends. */
+  const clipboard = async () => (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n");
+  await waitForResults(page, 2);
+  await results.card(page, /USD 689\.00 total/).click();
+  const panel = detail.surface(page);
+  await detail.quote(panel).waitFor();
+  assert.equal(await detail.migration(panel).count(), 0, "the offer column still holds a migratory switch");
+
+  await detail.quote(panel).click();
+  const text = quotation.text(page);
+  await text.waitFor();
+  const standard = await text.textContent() ?? "";
+  assert.doesNotMatch(standard, /PAQUETE MIGRATORIO/);
+  await eventually(async () => assert.equal(await clipboard(), standard));
+
+  /* Each way, the clipboard holds the text on screen and the copy says so. */
+  for (const [checked, pattern] of [[true, /^PAQUETE MIGRATORIO MIAMI/], [false, /^COTIZACI[OÓ]N BOLETO A[EÉ]REO/]] as const) {
+    await quotation.migration(page).click();
+    assert.equal(await quotation.migration(page).isChecked(), checked);
+    await eventually(async () => assert.match(await text.textContent() ?? "", pattern));
+    const shown = await text.textContent() ?? "";
+    await eventually(async () => assert.equal(await clipboard(), shown), { message: "the clipboard does not hold the text the quote shows" });
+    await eventually(async () => assert.equal(await quotation.copy(page).innerText(), "Copiado"));
+  }
+});
+
 /* ---- The flexible round trip: `/api/matrix`, one cell per departure day ---- */
 
 const STAY_NIGHTS = 7;

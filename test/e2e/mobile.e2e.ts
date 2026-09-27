@@ -134,6 +134,8 @@ suite.test("on a phone the whole search runs through sheets, the back button clo
   const offerSheet = detail.surface(page);
   await offerSheet.waitFor();
   await assertNoHorizontalOverflow(page, "offer sheet");
+  /* A phone has no quote panel, so the sheet keeps the migratory switch. */
+  await detail.migration(offerSheet).waitFor();
   await detail.quote(offerSheet).tap();
   await detail.copied(offerSheet).waitFor();
   assert.deepEqual(

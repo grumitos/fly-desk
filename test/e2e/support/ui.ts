@@ -253,6 +253,8 @@ export const detail = {
       }))
       .first(),
   quote: (root: Locator) => root.getByRole("button", { name: /^(Cotizar|Copiado)$/ }),
+  /** «Migratorio»: a phone's sheet only, which has no quote panel to hold it. */
+  migration: (root: Locator) => root.getByRole("switch", { name: "Paquete migratorio" }),
   /** The desk's offer column before an offer is chosen. */
   nothingSelected: (page: Page) => page.getByText("Selecciona una oferta para ver su detalle.", { exact: true }),
   /** The provider's own search, through `/r/<id>`. */
@@ -272,6 +274,11 @@ export const detail = {
 export const quotation = {
   dialog: (page: Page) => page.getByRole("dialog", { name: "Cotización lista para pegar" }),
   close: (page: Page) => page.getByRole("button", { name: "Cerrar la cotización" }),
+  /** The text exactly as it will be pasted. */
+  text: (page: Page) => quotation.dialog(page).getByTestId("quotation-text"),
+  /** «Migratorio», beside the text it rewrites. */
+  migration: (page: Page) => quotation.dialog(page).getByRole("switch", { name: "Paquete migratorio" }),
+  copy: (page: Page) => quotation.dialog(page).getByRole("button", { name: /^(Copiar|Copiado)$/ }),
   /** «Tarifa preparada hace 2 min · vuelve a cotizar si pasa de 15 min», at the dialog's foot. */
   fareAge: (page: Page) => quotation.dialog(page).getByText(/^Tarifa preparada .+ · vuelve a cotizar /),
 };

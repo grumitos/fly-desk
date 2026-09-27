@@ -251,9 +251,9 @@ back through it.
 
 **One quotation composer.** `src/core/quotation.ts::buildCommercialQuotation()`
 is the only place the commercial text exists. The UI and `POST /api/quotation`
-pass `migrationPlan` to that same function, and the migratory switch
+pass `migrationPlan` to that same function, and the quote's migratory switch
 regenerates the text locally over the offer the endpoint quoted, without a
-second call.
+second call, and copies it, so the clipboard holds the text on screen.
 
 **The frequent-station ranking is one global row, written where it is read.**
 The chips are the agency's ranking, not the browser's: `location_usage` is
