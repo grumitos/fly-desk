@@ -4,8 +4,10 @@
 
 @layer utilities {
   /* The lanes at their floors (logo 28, carrier 142, legs 359, baggage 36,
-     price 116, provider 26, 12px gaps, 10px padding) make the 787px stacking
-     threshold; useShellSize.ts derives its 428 and 284 from them. */
+     price 116, provider 26, 12px gaps, 10px padding at each end) make the
+     787px stacking threshold; useShellSize.ts derives its 428 and 284 from
+     them. The same padding at both ends keeps a row's edges as far from the
+     filter rail's rule as from the detail's. */
   .fd-card {
     position: relative;
     display: grid;
@@ -22,7 +24,7 @@
     align-items: center;
     min-width: 0;
     min-height: 52px;
-    padding: 0 0 0 10px;
+    padding: 0 10px;
     border-bottom: 1px solid var(--color-border);
     background: transparent;
     color: var(--color-foreground);

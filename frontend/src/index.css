@@ -628,8 +628,8 @@
     color: var(--color-primary-foreground);
   }
 
-  /* The right gutter is shared by the header and the rows so their lanes end
-     on the same pixel; the viewport inside is the only scroller. */
+  /* The column head and the rows share this box, so their lanes end on the
+     same pixel; the viewport inside is the only scroller. */
   .fd-list-body {
     position: relative;
     display: flex;
@@ -637,7 +637,6 @@
     flex: 1;
     flex-direction: column;
     overflow: hidden;
-    padding-right: 10px;
   }
 
   .fd-back-to-top {
@@ -1465,10 +1464,6 @@
 
   .fd-list-viewport {
     padding: 0 12px calc(12px + env(safe-area-inset-bottom, 0px));
-  }
-
-  .fd-list-body {
-    padding-right: 0;
   }
 
   .fd-card--head {
