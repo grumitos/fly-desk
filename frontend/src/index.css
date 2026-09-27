@@ -1117,14 +1117,16 @@
     gap: 8px;
   }
 
+  /* The label (11px at 9px) and the 19px value line, 2px apart, centre
+     together in a 50px field, as the desk's do in theirs. */
   .fd-field-control {
-    --fd-field-label-band: 16px;
+    --fd-field-label-band: 13px;
     gap: 10px;
     padding: var(--fd-field-label-band) 14px 0;
   }
 
   .fd-field-label {
-    top: 10px;
+    top: 9px;
     left: 14px;
   }
 
@@ -1240,7 +1242,7 @@
   }
 
   .fd-daterange-half {
-    --fd-field-label-band: 16px;
+    --fd-field-label-band: 13px;
     gap: 10px;
     padding: var(--fd-field-label-band) 12px 0 14px;
   }
