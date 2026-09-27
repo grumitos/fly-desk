@@ -8,7 +8,7 @@ import {
   type SearchJob,
 } from "./support/api-client.ts";
 import type { RecordedRequest } from "./support/fake-upstream.ts";
-import { runSearch, waitForResults } from "./support/flows.ts";
+import { ageStoredFares, runSearch, startedJob, waitForResults } from "./support/flows.ts";
 import { defineSuite, type TestScope, type TrackedContext } from "./support/harness.ts";
 import type { OfferSpec, SearchQuery } from "./support/fixtures.ts";
 import { addDays, AGIL_GDS_IDS, day, providerSearches } from "./support/scenario.ts";
@@ -161,23 +161,29 @@ suite.test("a Click and Book Plus search whose connection drops is asked once mo
   const dropTheNextSearch = () => fake.fail("cbplus.search", { reset: true }, { times: 1 });
 
   dropTheNextSearch();
-  const { tracked, page } = await scope.signedInPage(searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "SCL", departure }));
+  const { tracked, page } = await scope.signedInPage("/");
+  const job = await startedJob<SearchJob>(page, async () => {
+    await page.goto(`${scope.stack.baseUrl}${searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "SCL", departure })}`);
+  });
   await waitForResults(page, ONE_FARE.length);
   assert.equal(await notice.line(page).count(), 0, "a search that answered the second time was reported");
   const searched = fake.requests("cbplus.search");
   assert.deepEqual(searched.map((request) => request.status), [0, 200]);
   assert.notEqual(searched[1]!.headers.connection, "keep-alive", "the second attempt went out on a pooled connection");
 
-  /* A quote confirms the fare with a search of its own: dropped, it would
-     leave the fare unconfirmed and the quote refused. */
+  /* A quote confirms a fare older than the window with a search of its own:
+     dropped, it would leave the fare unconfirmed and the quote refused. */
+  await ageStoredFares(scope.stack, job.searchJobId);
   dropTheNextSearch();
   await results.card(page, /Click and Book Plus$/).click();
+  /* Read as it arrives: a body the restart cut off would never finish. */
+  const quoted = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/quotation");
   await detail.quote(detail.surface(page)).click();
   await quotation.dialog(page).waitFor();
   assert.match(await quotation.dialog(page).innerText(), /US\$\s*199(?:\.00)? por adulto/);
   assert.deepEqual(fake.requests("cbplus.search").slice(searched.length).map((request) => request.status), [0, 200]);
-  const quoted = (await tracked.apiBodies()).filter((entry) => new URL(entry.url).pathname === "/api/quotation");
-  assert.deepEqual(quoted.map((entry) => entry.status), [200]);
+  assert.equal((await quoted).status(), 200);
+  assert.equal(tracked.apiRequests.filter((request) => new URL(request.url).pathname === "/api/quotation").length, 1);
   assert.equal(
     scope.stack.logs("runner", scope.logMark).match(/Click and Book Plus flight search sent again on a new connection/g)?.length,
     2,

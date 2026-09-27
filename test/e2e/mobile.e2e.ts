@@ -127,15 +127,20 @@ suite.test("on a phone the whole search runs through sheets, the back button clo
   assert.ok(asked.length > 0 && asked.every((request) => request.query?.adults === 2), "the providers were not asked for two adults");
   assert.ok(cards.every((card) => /USD [\d.,]+ total, USD [\d.,]+ por persona/.test(card.label)));
 
-  /* The fare in its sheet, quoted: the confirmation is a line, not a panel. */
-  const cbplusBefore = fake.requests("cbplus.search").length;
+  /* The fare in its sheet, quoted: the confirmation is a line, not a panel,
+     and a fare fresh from its search is quoted with no provider asked. */
+  const requestsBefore = fake.requests().length;
   await results.card(page, /USD 285\.60 total.*Click and Book Plus$/).tap();
   const offerSheet = detail.surface(page);
   await offerSheet.waitFor();
   await assertNoHorizontalOverflow(page, "offer sheet");
   await detail.quote(offerSheet).tap();
   await detail.copied(offerSheet).waitFor();
-  assert.equal(fake.requests("cbplus.search").length, cbplusBefore + 1, "the quote did not ask the provider");
+  assert.deepEqual(
+    fake.requests().slice(requestsBefore).filter((request) => request.op !== "airlineMark").map((request) => request.op),
+    [],
+    "quoting a fare fresh from its search asked a provider",
+  );
   assert.match(await page.evaluate(() => navigator.clipboard.readText()), /COTIZACI[OÓ]N/);
   await detail.close(offerSheet).tap();
   await offerSheet.waitFor({ state: "hidden" });

@@ -120,8 +120,10 @@ export function DetailPanel({
   const displayOffer = verifiedQuotation && verifiedQuotation.quoteKey === quoteKey
     ? verifiedQuotation.offer
     : offer
-  /* An unconfirmed quotation is never shown or copied: a fare that does not
-     exist reaches the customer as a price the agency must honour. */
+  /* Only the server's quote is shown or copied, never the text composed here:
+     it quotes a fare fresh from its search as it is and confirms an older one
+     with the provider first, because a fare that no longer exists reaches the
+     customer as a price the agency must honour. */
   const quotationFailed = Boolean(quoteKey) && quotationFailureKey === quoteKey
   const activeQuotation = visibleQuotationKey === quoteKey && !quotationFailed
     ? verifiedQuotationState

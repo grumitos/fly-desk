@@ -1184,14 +1184,24 @@ function isTrustedApiRequest(request: Request): boolean {
   return hasAcceptedApiAccessToken(request.headers);
 }
 
-function isOfferValidatedForQuotation(offer: CanonicalOffer): boolean {
-  if (offer.priceConfidence !== "validated" || offer.priceStatus !== "verified") {
-    return false;
+function isWithinQuotationWindow(timestamp: string | undefined): boolean {
+  const at = Date.parse(timestamp ?? "");
+  const ageMs = Date.now() - at;
+  return Number.isFinite(at) && ageMs >= 0 && ageMs <= QUOTATION_FARE_FRESHNESS_MS;
+}
+
+/* Quoted as it is, with no provider request: a fare the provider confirmed
+   within the window, or a live one whose search answered within it — the
+   list prepares a fare for quoting (`quotationPreparedAt`) as its search
+   answers, and a cached draft carries no such mark. */
+function isOfferQuotableAsIs(offer: CanonicalOffer): boolean {
+  if (offer.priceConfidence === "live") {
+    return isWithinQuotationWindow(offer.quotationPreparedAt);
   }
 
-  const verifiedAt = Date.parse(offer.priceVerifiedAt ?? "");
-  const ageMs = Date.now() - verifiedAt;
-  return Number.isFinite(verifiedAt) && ageMs >= 0 && ageMs <= QUOTATION_FARE_FRESHNESS_MS;
+  return offer.priceConfidence === "validated"
+    && offer.priceStatus === "verified"
+    && isWithinQuotationWindow(offer.priceVerifiedAt);
 }
 
 function stripQuotationPreparation(offer: CanonicalOffer): CanonicalOffer {
@@ -1527,7 +1537,7 @@ function validateQuotationOfferOnce(source: QuotationSource): Promise<CanonicalO
 }
 
 async function resolveValidatedQuotationOffer(source: QuotationSource): Promise<CanonicalOffer | undefined> {
-  if (isOfferValidatedForQuotation(source.offer)) {
+  if (isOfferQuotableAsIs(source.offer)) {
     return source.offer;
   }
 
@@ -3375,7 +3385,11 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
       return json({ errors: ["Selected offer could not be validated for quotation."] }, { status: 409 });
     }
 
-    const offer = storeValidatedQuotationOffer(runtime, source, validatedOffer);
+    /* An offer quoted as it is stays as the list has it: nothing is stored,
+       and a live matrix cell is not marked validated. */
+    const offer = validatedOffer === source.offer
+      ? source.offer
+      : storeValidatedQuotationOffer(runtime, source, validatedOffer);
     const usdToPenRateInfo = offerNeedsQuotationRate(offer, source.request)
       ? await resolveStandaloneUsdToPenRateInfo(offer)
       : undefined;

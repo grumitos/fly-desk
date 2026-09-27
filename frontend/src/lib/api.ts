@@ -1257,7 +1257,13 @@ export async function requestQuotation(payload: QuotationRequest): Promise<Quota
     commercialText?: unknown
   }>("/api/quotation", payload)
   const rawOfferRecord = offerTransportRecord(data.offer)
-  const priceVerifiedAt = rawOfferRecord?.priceVerifiedAt
+  /* A fare fresh from its search comes back live and dated by its search; an
+     older one, confirmed by the provider and dated by that confirmation. */
+  const quotedAt = rawOfferRecord?.priceConfidence === "live"
+    ? rawOfferRecord.quotationPreparedAt
+    : rawOfferRecord?.priceConfidence === "validated" && rawOfferRecord.priceStatus === "verified"
+      ? rawOfferRecord.priceVerifiedAt
+      : undefined
 
   if (
     typeof data.searchSessionId !== "string"
@@ -1265,10 +1271,8 @@ export async function requestQuotation(payload: QuotationRequest): Promise<Quota
     || typeof data.commercialText !== "string"
     || data.commercialText.trim().length === 0
     || !rawOfferRecord
-    || rawOfferRecord.priceConfidence !== "validated"
-    || rawOfferRecord.priceStatus !== "verified"
-    || typeof priceVerifiedAt !== "string"
-    || !Number.isFinite(Date.parse(priceVerifiedAt))
+    || typeof quotedAt !== "string"
+    || !Number.isFinite(Date.parse(quotedAt))
   ) {
     throw new FlyDeskApiError(
       "El servidor devolvió una cotización no válida.",

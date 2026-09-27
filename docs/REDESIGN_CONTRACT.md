@@ -252,8 +252,8 @@ back through it.
 **One quotation composer.** `src/core/quotation.ts::buildCommercialQuotation()`
 is the only place the commercial text exists. The UI and `POST /api/quotation`
 pass `migrationPlan` to that same function, and the migratory switch
-regenerates the text locally over the already-revalidated offer, without a
-second provider call.
+regenerates the text locally over the offer the endpoint quoted, without a
+second call.
 
 **The frequent-station ranking is one global row, written where it is read.**
 The chips are the agency's ranking, not the browser's: `location_usage` is
@@ -286,23 +286,27 @@ while the stations the desk lives on keep the slots above it. At `limit < 2`
 there is no reserved slot. `getDiagnostics()` reports the ranking as
 `rolling-window-uses-with-newest-card` with its `rankingWindowDays`.
 
-**Quoting always revalidates.** The first «Cotizar» calls
+**Quoting revalidates an older fare only.** «Cotizar» calls
 `POST /api/quotation` with the source search and offer ids. The endpoint
 accepts only a complete stored offer — a matrix cell with a price but no real
-itinerary is not quotable. A `validated`/`verified` fare is reused only within
-15 minutes of `priceVerifiedAt`; past that the endpoint asks the provider
-again and demands the same canonical flight signature, so a cheaper
-alternative on the same day and route cannot silently replace the chosen one.
-The client accepts the answer only if it keeps the requested session and
-carries a complete transport offer, a positive price, a currency,
-`validated`/`verified`, a valid timestamp and non-empty text.
+itinerary is not quotable. A live fare whose search answered within 15 minutes
+(`quotationPreparedAt`) is quoted as the list has it, with no provider
+request, and stays stored as it was; a `validated`/`verified` fare is reused
+within 15 minutes of `priceVerifiedAt`. Anything older, or a fare the list
+never prepared, is asked of the provider again, which must return the same
+canonical flight signature, so a cheaper alternative on the same day and route
+cannot silently replace the chosen one. The client accepts the answer only if
+it keeps the requested session and carries a complete transport offer, a
+positive price, a currency, either `live` with a valid `quotationPreparedAt`
+or `validated`/`verified` with a valid `priceVerifiedAt`, and non-empty text.
 
 **`quotationPreparedAt` is local, `priceVerifiedAt` is the provider's.** The
 first marks the first local materialisation with everything needed to quote;
 it is set once and preserved across re-materialisations. Only the second
-changes when the quotation call succeeds. One shared constant fixes both the
-visible 15-minute warning and the reuse window. Cached SWR drafts drop
-`quotationPreparedAt`, so the UI never publishes a false age.
+changes when a quotation confirms the fare with the provider. One shared
+constant fixes the visible 15-minute warning and both reuse windows. Cached
+SWR drafts drop `quotationPreparedAt`, so the UI never publishes a false age
+and a quote never takes a cached fare as fresh.
 
 **Search ceilings come from the runtime.** `src/core/search-limits.ts` holds
 the stay, passenger and lap-infant maxima; the HTTP contract validates against

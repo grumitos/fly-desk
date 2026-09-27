@@ -8,7 +8,7 @@ import {
   type QuotationAnswer,
   type SearchJob,
 } from "./support/api-client.ts";
-import { readWholeList, rowKey, runSearch, startedJob, waitForMotion, waitForResults } from "./support/flows.ts";
+import { ageStoredFares, readWholeList, rowKey, runSearch, startedJob, waitForMotion, waitForResults } from "./support/flows.ts";
 import { defineSuite, type TestScope } from "./support/harness.ts";
 import { fakeCbplusToken, FAKE_CBPLUS_TERMINAL_ID, type OfferSpec, type SearchQuery } from "./support/fixtures.ts";
 import {
@@ -174,21 +174,24 @@ suite.test("a shared round-trip link survives the sign-in gate and carries the s
   assert.equal(await results.sort(page, "duración").getAttribute("aria-checked"), "true");
   await eventually(async () => assert.deepEqual((await readCards(page)).map((card) => card.amount), [689, 540]));
 
-  /* Detail and quotation: the provider is asked again, and the text quotes
-     the fare per adult. */
+  /* Detail and quotation: a fare fresh from its search is quoted at once, as
+     the list has it, with no provider asked; the text quotes the fare per
+     adult, and the quote says how old the fare is. */
   await results.card(page, /Click and Book Plus$/).click();
   const offerPanel = detail.surface(page);
   await offerPanel.waitFor();
-  const cbplusBefore = fake.requests("cbplus.search").length;
+  const requestsBefore = fake.requests().length;
   await detail.quote(offerPanel).click();
   const quoteDialog = quotation.dialog(page);
   await quoteDialog.waitFor();
   /* The list, the offer and the quotation set words and figures in one family. */
   assert.deepEqual((await textFontFamilies(page)).filter((family) => !family.startsWith("Inter")), [], "text set outside Inter");
-  assert.equal(fake.requests("cbplus.search").length, cbplusBefore + 1, "the quotation revalidated the fare with the provider");
-  const revalidation = fake.requests("cbplus.search").at(-1)!;
-  assert.equal(revalidation.query?.departureDate, departure);
-  assert.equal(revalidation.query?.returnDate, returning);
+  assert.deepEqual(
+    fake.requests().slice(requestsBefore).filter((request) => request.op !== "airlineMark").map((request) => request.op),
+    [],
+    "quoting a fare fresh from its search asked a provider",
+  );
+  assert.match(await quotation.fareAge(page).innerText(), /^Tarifa preparada hace menos de 1 min/);
   const quoteText = await quoteDialog.innerText();
   assert.match(quoteText, /US\$\s*689(?:\.00)? por adulto/);
   await quotation.close(page).click();
@@ -417,8 +420,10 @@ suite.test("a flexible round trip fills in cell by cell, keeps the cards it drew
     );
   }
 
-  /* The provider now asks 603.50 for the 598 fare: the quote goes back to
-     it, and both the card and the text carry the new figure. */
+  /* Past the window a fare is no longer quoted as the list has it, and the
+     provider now asks 603.50 for the 598 fare: the quote goes back to it,
+     and both the card and the text carry the new figure. */
+  await ageStoredFares(scope.stack, started.matrixJobId);
   cbplusFares.set(MATRIX_DAYS[1], 603.5);
   const cbplusBefore = fake.requests("cbplus.search").length;
   await results.card(page, /USD 598\.00 total/).click();
@@ -458,8 +463,9 @@ suite.test("a flexible round trip fills in cell by cell, keeps the cards it drew
 });
 
 /**
- * Quotes the fare on `card` from its panel, then quotes it again. The fare was
- * confirmed a moment ago, so the second quote reuses it. Returns the first
+ * Quotes the fare on `card` from its panel once its search is older than the
+ * window, which confirms it with the provider, then quotes it again. The fare
+ * was confirmed a moment ago, so the second quote reuses it. Returns the first
  * answer and the quoted offer as the job keeps it.
  */
 async function quoteTwice(
@@ -468,14 +474,23 @@ async function quoteTwice(
   fares: number,
   card: RegExp,
 ): Promise<{ answer: QuotationAnswer; stored: CanonicalOffer | undefined }> {
-  const { fake } = scope;
-  const { tracked, page } = await scope.signedInPage(link);
+  const { fake, stack } = scope;
+  const { tracked, page } = await scope.signedInPage("/");
+  const started = await startedJob<SearchJob>(page, async () => {
+    await page.goto(`${stack.baseUrl}${link}`);
+  });
   await waitForResults(page, fares);
+  await ageStoredFares(stack, started.searchJobId);
+  const searched = fake.requests("cbplus.search").length;
   await results.card(page, card).click();
   const panel = detail.surface(page);
+  /* Read as it arrives: a body the restart cut off would never finish. */
+  const answered = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/quotation");
   await detail.quote(panel).click();
   const quoteDialog = quotation.dialog(page);
   await quoteDialog.waitFor();
+  const answer = await (await answered).json() as QuotationAnswer;
+  assert.equal(fake.requests("cbplus.search").length, searched + 1, "the first quote of an older fare did not confirm it with the provider");
   await quotation.close(page).click();
   await quoteDialog.waitFor({ state: "hidden" });
   const calls = fake.requests("cbplus.search").length;
@@ -484,10 +499,8 @@ async function quoteTwice(
   await detail.quote(panel).click();
   await quoteDialog.waitFor();
   assert.equal(fake.requests("cbplus.search").length, calls, "the second quote asked the provider again");
-  const answers = (await tracked.apiBodies()).filter((entry) => new URL(entry.url).pathname === "/api/quotation");
-  assert.equal(answers.length, 2);
+  assert.equal(tracked.apiRequests.filter((request) => new URL(request.url).pathname === "/api/quotation").length, 2);
 
-  const answer = JSON.parse(answers[0]!.body) as QuotationAnswer;
   const job = await readSearchJob(await scope.api(), answer.searchSessionId);
   return { answer, stored: searchOffers(job).find((offer) => offer.id === answer.offer.id) };
 }
