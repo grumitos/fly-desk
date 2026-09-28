@@ -1,19 +1,21 @@
 # Fly Desk
 
-> **Status:** under active development. The application, build, and automated suites are functional; operational deployment and provider sessions remain private.
+> **Status:** in production as a private deployment, and under active development. The application, the build, and the end-to-end suite are what this repository shares; provider sessions and operational data stay private.
 
-A private web workspace for travel agents to search, compare, and quote flights.
+A private web workspace for travel agents to search, compare, and quote flights. It asks Agilsmart and Click and Book Plus together, merges their fares into one list that an agent filters and sorts, and turns the chosen fare into a quotation ready to paste.
 
 The repository contains no credentials, browser sessions, or operational data. A fresh installation can build and run the interface, but real searches require authorized access to the configured providers.
 
-![Fly Desk search interface](./docs/screenshots/overview.png)
+![Fly Desk in the dark theme: a Lima–Miami round trip merged from both providers, with the filters on the left, the results table in the middle and the selected offer on the right](./docs/screenshots/overview.png)
+
+*The desk at 1440×900 in the dark theme, showing synthetic fares from the end-to-end suite's fake providers.*
 
 Fly Desk is a Bun-only application prepared for VPS deployment:
 
 - a Bun server (`Bun.serve`) that serves the private web UI and API
 - an optional dedicated Bun process that runs searches on loopback and isolates provider load from login/UI
 - an optional dedicated Bun process that resolves `/r/<id>` from the SQLite cache without loading the main runtime
-- a React frontend in `frontend/` with desk, tablet and phone layouts, built with `Bun.build` and served from `frontend/dist`
+- a React frontend in `frontend/` with desk, tablet and phone layouts and a light and a dark theme, built with `Bun.build` and served from `frontend/dist`
 - web authentication with a signed httpOnly cookie
 - Agilsmart integration that mints its bearer from a persisted account identity, and reads the session of a real Chrome over DevTools only to create that identity
 - Click and Book Plus integration using environment-controlled context, a token the platform renews, and B2B warm-up when applicable
@@ -32,8 +34,13 @@ Fly Desk is a Bun-only application prepared for VPS deployment:
 - up to three recent origins/destinations per browser session, and three frequent ones from one global ranking: uses in the last 30 days, with the last card kept for the station used most recently. The backend records a route when it accepts a search
 - an idle provider rail that names the providers the desk searches, always and without health copy; readiness stays on the authenticated `/api/provider-status` surface that the router uses internally
 - a shareable search URL: every search writes its parameters onto the address bar. Opening a link to an exact search whose route and dates the form would accept runs it, once; any other link — a flexible or migratory search, missing data, or dates the form would refuse — arrives filled and waits for «Buscar». `?job=` reads the job it names instead, and reloading in the tab that wrote the URL does not re-run it
-- visible filters for stops, maximum layover time, baggage, the outbound's departure and arrival by part of the day, and airlines
+- visible filters for stops, maximum layover time, baggage, the outbound's departure and arrival by part of the day, and airlines; on a phone, «Directo» and the departure's «Mañana», «Tarde» and «Noche» are one tap away beside «Filtros»
+- an offer's airline is the one that tickets it, the provider's validating carrier or else the first flight's marketer, and the airline filter, its counts and the card's name and mark all read that one code
+- four orders — price, duration, departure and stops — chosen from the column heads. The backend orders, ties break by price, and the choice persists across searches and travels in the shared link
+- carrier marks: the release bundles the common ones; a carrier without one is fetched once from the provider CDN, checked, kept, and served from there afterwards, and a code with no artwork at all draws its two letters
 - one continuous list of results, grown as it is scrolled, with backend warnings
+- a shared search capacity: a search that does not fit waits and is never refused for it, the desk says «En espera» until it starts, and the title bar's meter shows how many of the 7 cupos are in use
+- the title bar copies the search with its filters and order, and pastes either such a configuration or a commercial quotation; a pasted quotation opens in a preview from which the agent reviews or launches its search
 - a side panel with details, known conditions, purchase paths, and quotation from the shared core; «Cotizar» calls `/api/quotation`, which quotes a live fare whose search answered in the last 15 minutes as the list has it, with no provider request, and first confirms an older fare with the provider for the exact stored flight, reusing that confirmation for at most 15 minutes; the quote's migratory switch rewrites the text over that same quoted offer immediately, through the shared compositor, and copies what it shows. A phone, which has no quote panel, keeps that switch at the foot of its offer sheet
 
 The current React UI does not expose:
@@ -109,8 +116,9 @@ Bun is the supported package manager. Do not add `package-lock.json`, `pnpm-lock
 - `frontend/src/App.tsx`: main workspace composition
 - `frontend/src/components/`: top bar, search shell, results, details, and UI components
 - `frontend/src/components/results/`: result card, presentation model, migration coverage, and schedule alternatives
-- `frontend/src/hooks/`: search and polling, autocomplete, shell size, and overlay history
+- `frontend/src/hooks/`: search and polling, autocomplete, the shared search capacity, shell size, and overlay history
 - `frontend/src/lib/api.ts`: BFF HTTP client
+- `frontend/src/lib/search-share.ts`: the shareable search URL and the configuration copied to and pasted from the clipboard
 - `frontend/src/index.css`: colour tokens, light/dark themes, and layout; `design-system.css` holds the type, geometry, icon, stacking and motion catalogues, and `components.css` the component styles
 - `frontend/public/`: static assets copied to `frontend/dist`
 - `frontend/dist/`: generated artifact served by the backend
@@ -127,14 +135,24 @@ Bun is the supported package manager. Do not add `package-lock.json`, `pnpm-lock
 - `src/local-agil.ts`: identity, session read over DevTools, exact/range/matrix search, pricing, and Agil deep links
 - `src/local-costamar.ts`: Click and Book Plus client, exact/range/matrix search, branded links, and B2B warm-up
 - `src/providers/costamar/search-payloads.ts`: Click and Book Plus payloads; `costamar` remains as a legacy internal alias
-- `src/core/`: normalization, matrix, native schedule groups, ranking, quotation/parser, search limits, and shared contracts
+- `src/core/`: normalization, matrix, native schedule groups, filtering (the ticketing airline included), ranking, station names, quotation/parser, search limits, and shared contracts
 - `src/search-service-client.ts`: optional loopback delegation of search, quotation, and provider-status routes to the dedicated runner
 - `src/search-worker-client.ts` / `src/search-worker.ts`: Bun child processes that isolate heavy searches
+- `src/search-admission.ts` / `src/unit-memory.ts`: the runner's shared capacity and its queue, and the cgroup memory reading that admission consults
+- `src/login-admission.ts`: bounded failed-login admission before password derivation
+- `src/airline-mark-store.ts`: carrier marks fetched once, checked, and kept in the app data directory
 - `src/session-store.ts`: live jobs, resident budget, local SQLite, redirects, and purchase paths
 - `src/location-suggestion-cache.ts`: bounded SQLite autocomplete cache with query/session/global caps
 - `src/location-usage-store.ts`: one global station ranking — uses within a rolling 30-day window for the leading cards, the most recently used station for the last one — plus 30-day per-session recent locations; the unit that serves the ranking is the unit that counts the search
 - `src/provider-status.ts`: sanitized in-memory provider readiness tracker with closed states/reasons and evidence precedence
 - `src/runtime-paths.ts`: persistent path resolution; `FLY_DESK_APP_DATA_DIR` keeps caches outside the release when no specific override is set
+
+### Tests and release
+
+- `test/e2e/`: the end-to-end suite and its harness, which runs the web unit, the runner and the redirect service against fake provider upstreams; see [`docs/TESTING.md`](./docs/TESTING.md)
+- `scripts/run-e2e.ts`: runs the suite's spec files in parallel
+- `scripts/pack-release.sh` / `scripts/release-smoke.ts`: the deterministic release artifact of a revision, and the smoke that boots it the way the platform does
+- `deploy/`: what a release declares to the platform: the prepare hook and its capabilities
 
 ## Configuration
 
